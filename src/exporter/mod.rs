@@ -14,7 +14,7 @@ mod http;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio::time::{timeout, Instant};
 
 pub use grpc::GrpcExporter;
@@ -80,40 +80,76 @@ pub fn from_config(cfg: &ExporterConfig) -> Result<Box<dyn Exporter>, ExportErro
     })
 }
 
+/// Sampled traces handed from the sampler to the exporter, together with
+/// the number of span permits the sampler acquired for them.
+#[derive(Debug)]
+pub struct ExportBatch {
+    /// Released traces.
+    pub released: Vec<Released>,
+    /// Permits taken from the export semaphore (returned as spans leave).
+    pub permits: usize,
+}
+
 /// Batching, retrying export loop.
 pub struct ExportWorker {
     exporter: Box<dyn Exporter>,
     cfg: ExporterConfig,
     telemetry: Arc<Telemetry>,
     pending: Vec<SpanRecord>,
+    permits: Option<Arc<Semaphore>>,
+    owed: usize,
 }
 
 impl ExportWorker {
     /// New worker.
-    pub fn new(exporter: Box<dyn Exporter>, cfg: ExporterConfig, telemetry: Arc<Telemetry>) -> Self {
+    pub fn new(
+        exporter: Box<dyn Exporter>,
+        cfg: ExporterConfig,
+        telemetry: Arc<Telemetry>,
+    ) -> Self {
         ExportWorker {
             exporter,
             cfg,
             telemetry,
             pending: Vec::new(),
+            permits: None,
+            owed: 0,
+        }
+    }
+
+    /// Return span permits to `sem` as spans leave the worker.
+    pub fn with_permits(mut self, sem: Arc<Semaphore>) -> Self {
+        self.permits = Some(sem);
+        self
+    }
+
+    /// Keep at most one permit per pending span; release the rest.
+    fn settle_permits(&mut self) {
+        let keep = self.owed.min(self.pending.len());
+        let release = self.owed - keep;
+        self.owed = keep;
+        if let (Some(sem), true) = (&self.permits, release > 0) {
+            sem.add_permits(release);
         }
     }
 
     /// Run until the channel closes, then flush what is pending.
-    pub async fn run(mut self, mut rx: mpsc::Receiver<Vec<Released>>) {
+    pub async fn run(mut self, mut rx: mpsc::Receiver<ExportBatch>) {
         let flush_every = Duration::from_millis(self.cfg.flush_interval_ms.max(1));
         let mut deadline = Instant::now() + flush_every;
         loop {
             tokio::select! {
                 msg = rx.recv() => match msg {
                     Some(batch) => {
-                        for r in batch {
+                        self.owed += batch.permits;
+                        for r in batch.released {
                             self.pending.extend(r.spans);
                         }
                         while self.pending.len() >= self.cfg.max_batch_spans {
                             let rest = self.pending.split_off(self.cfg.max_batch_spans);
                             let full = std::mem::replace(&mut self.pending, rest);
                             self.send(full).await;
+                            self.settle_permits();
                             deadline = Instant::now() + flush_every;
                         }
                     }
@@ -123,6 +159,7 @@ impl ExportWorker {
                     if !self.pending.is_empty() {
                         let batch = std::mem::take(&mut self.pending);
                         self.send(batch).await;
+                        self.settle_permits();
                     }
                     deadline = Instant::now() + flush_every;
                 }
@@ -133,6 +170,7 @@ impl ExportWorker {
             let rest = self.pending.split_off(at);
             let batch = std::mem::replace(&mut self.pending, rest);
             self.send(batch).await;
+            self.settle_permits();
         }
     }
 
@@ -240,7 +278,12 @@ mod tests {
         let (tx, rx) = mpsc::channel(4);
         let w = ExportWorker::new(Box::new(s), cfg(attempts), Arc::clone(&t));
         let h = tokio::spawn(w.run(rx));
-        tx.send(batches).await.unwrap();
+        tx.send(ExportBatch {
+            released: batches,
+            permits: 0,
+        })
+        .await
+        .unwrap();
         drop(tx);
         h.await.unwrap();
         t
@@ -260,11 +303,23 @@ mod tests {
         let s = Arc::new(Scripted::default());
         let t = Arc::new(Telemetry::default());
         let (tx, rx) = mpsc::channel(4);
-        let w = ExportWorker::new(Box::new(Arc::clone(&s)), cfg(1), Arc::clone(&t));
+        let sem = Arc::new(Semaphore::new(0));
+        let w = ExportWorker::new(Box::new(Arc::clone(&s)), cfg(1), Arc::clone(&t))
+            .with_permits(Arc::clone(&sem));
         let h = tokio::spawn(w.run(rx));
-        tx.send(vec![released(2)]).await.unwrap();
+        tx.send(ExportBatch {
+            released: vec![released(6)],
+            permits: 6,
+        })
+        .await
+        .unwrap();
         tokio::time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(*s.got.lock().unwrap(), vec![2]);
+        assert_eq!(*s.got.lock().unwrap(), vec![4, 2]);
+        assert_eq!(
+            sem.available_permits(),
+            6,
+            "all permits returned once spans left"
+        );
         drop(tx);
         h.await.unwrap();
     }
@@ -305,7 +360,10 @@ mod tests {
 
     #[tokio::test]
     async fn null_exporter_and_factory() {
-        assert!(NullExporter.export(ExportTraceServiceRequest::default()).await.is_ok());
+        assert!(NullExporter
+            .export(ExportTraceServiceRequest::default())
+            .await
+            .is_ok());
         assert!(from_config(&ExporterConfig::default()).is_ok());
         let bad = ExporterConfig {
             kind: ExporterKind::OtlpHttp,

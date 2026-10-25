@@ -16,6 +16,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
 };
 use prost::Message;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 
 use crate::runtime::{IngestError, IngestHandle};
 use crate::ExportTraceServiceRequest;
@@ -175,13 +176,19 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-/// Build the router (exposed for tests).
-pub fn router(handle: IngestHandle, max_request_bytes: usize) -> Router {
-    Router::new()
+/// Build the router. Export requests share the `in_flight` limit with the
+/// gRPC receiver; the limit is acquired before the body is read.
+pub fn router(handle: IngestHandle, max_request_bytes: usize, in_flight: Arc<Semaphore>) -> Router {
+    let traces = Router::new()
         .route("/v1/traces", post(export))
+        .layer(tower::limit::GlobalConcurrencyLimitLayer::with_semaphore(
+            in_flight,
+        ))
+        .layer(DefaultBodyLimit::max(max_request_bytes));
+    Router::new()
+        .merge(traces)
         .route("/metrics", get(metrics))
         .route("/healthz", get(healthz))
-        .layer(DefaultBodyLimit::max(max_request_bytes))
         .with_state(AppState {
             handle,
             max_request_bytes,
@@ -193,9 +200,10 @@ pub async fn serve(
     listener: TcpListener,
     handle: IngestHandle,
     max_request_bytes: usize,
+    in_flight: Arc<Semaphore>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    axum::serve(listener, router(handle, max_request_bytes))
+    axum::serve(listener, router(handle, max_request_bytes, in_flight))
         .with_graceful_shutdown(shutdown)
         .await
 }
@@ -221,18 +229,23 @@ mod tests {
 
     #[test]
     fn decodes_otlp_json() {
-        let (req, enc) = decode_body(&headers("application/json", None), JSON.as_bytes(), 1 << 20).unwrap();
+        let (req, enc) =
+            decode_body(&headers("application/json", None), JSON.as_bytes(), 1 << 20).unwrap();
         assert_eq!(enc, Encoding::Json);
         let span = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(span.trace_id.len(), 16);
         assert_eq!(span.trace_id[0], 0x5b);
-        assert_eq!(span.end_time_unix_nano - span.start_time_unix_nano, 1_000_000_000);
+        assert_eq!(
+            span.end_time_unix_nano - span.start_time_unix_nano,
+            1_000_000_000
+        );
         assert_eq!(span.status.as_ref().unwrap().code, 2);
     }
 
     #[test]
     fn decodes_gzip_protobuf_and_enforces_limits() {
-        let (req, _) = decode_body(&headers("application/json", None), JSON.as_bytes(), 1 << 20).unwrap();
+        let (req, _) =
+            decode_body(&headers("application/json", None), JSON.as_bytes(), 1 << 20).unwrap();
         let pb = req.encode_to_vec();
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         gz.write_all(&pb).unwrap();
@@ -241,8 +254,14 @@ mod tests {
         let (back, enc) = decode_body(&h, &gz, 1 << 20).unwrap();
         assert_eq!(enc, Encoding::Protobuf);
         assert_eq!(back, req);
-        assert_eq!(decode_body(&h, &gz, 10).unwrap_err(), DecodeError::TooLarge(10));
-        assert!(matches!(decode_body(&h, b"not gzip", 100), Err(DecodeError::Malformed(_))));
+        assert_eq!(
+            decode_body(&h, &gz, 10).unwrap_err(),
+            DecodeError::TooLarge(10)
+        );
+        assert!(matches!(
+            decode_body(&h, b"not gzip", 100),
+            Err(DecodeError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -260,7 +279,11 @@ mod tests {
             Err(DecodeError::Malformed(_))
         ));
         assert!(matches!(
-            decode_body(&headers("application/x-protobuf", None), &[0xff, 0xff, 0xff], 10),
+            decode_body(
+                &headers("application/x-protobuf", None),
+                &[0xff, 0xff, 0xff],
+                10
+            ),
             Err(DecodeError::Malformed(_))
         ));
         // Missing content type defaults to protobuf; empty body is a valid empty request.
@@ -272,15 +295,23 @@ mod tests {
         let r = refusal(IngestError::QueueFull, 3);
         assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(r.headers()[header::RETRY_AFTER], "3");
-        assert_eq!(refusal(IngestError::AdmissionClosed, 1).status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(refusal(IngestError::ShuttingDown, 1).status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            refusal(IngestError::AdmissionClosed, 1).status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            refusal(IngestError::ShuttingDown, 1).status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
     fn json_response_encoding() {
         let resp = ExportTraceServiceResponse::default();
         let json = encode_response(&resp, Encoding::Json);
-        assert!(serde_json::from_slice::<serde_json::Value>(&json).unwrap().is_object());
+        assert!(serde_json::from_slice::<serde_json::Value>(&json)
+            .unwrap()
+            .is_object());
         assert!(encode_response(&resp, Encoding::Protobuf).is_empty());
     }
 }

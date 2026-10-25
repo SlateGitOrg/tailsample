@@ -76,6 +76,9 @@ impl Server {
         let pipeline = Pipeline::spawn(cfg, exporter)?;
         let (stop, stop_rx) = watch::channel(false);
         let max = cfg.receiver.max_request_bytes;
+        let in_flight = Arc::new(tokio::sync::Semaphore::new(
+            cfg.receiver.max_concurrent_requests,
+        ));
         let mut receivers = Vec::new();
         let wait = |mut rx: watch::Receiver<bool>| async move {
             let _ = rx.wait_for(|v| *v).await;
@@ -85,8 +88,9 @@ impl Server {
         if let Some((listener, addr)) = grpc {
             let h = pipeline.handle();
             let signal = wait(stop_rx.clone());
+            let limit = Arc::clone(&in_flight);
             receivers.push(tokio::spawn(async move {
-                if let Err(e) = receiver::grpc::serve(listener, h, max, signal).await {
+                if let Err(e) = receiver::grpc::serve(listener, h, max, limit, signal).await {
                     tracing::error!(%addr, error = %e, "gRPC receiver failed");
                 }
             }));
@@ -95,8 +99,9 @@ impl Server {
         if let Some((listener, addr)) = http {
             let h = pipeline.handle();
             let signal = wait(stop_rx.clone());
+            let limit = Arc::clone(&in_flight);
             receivers.push(tokio::spawn(async move {
-                if let Err(e) = receiver::http::serve(listener, h, max, signal).await {
+                if let Err(e) = receiver::http::serve(listener, h, max, limit, signal).await {
                     tracing::error!(%addr, error = %e, "HTTP receiver failed");
                 }
             }));

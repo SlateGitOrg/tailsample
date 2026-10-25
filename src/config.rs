@@ -60,6 +60,10 @@ pub struct ReceiverConfig {
     pub http_listen: Option<String>,
     /// Maximum accepted request body (after decompression), in bytes.
     pub max_request_bytes: usize,
+    /// Requests decoded concurrently across both receivers; further
+    /// requests wait before their body is read. Bounds decode memory to
+    /// roughly `max_concurrent_requests * max_request_bytes`.
+    pub max_concurrent_requests: usize,
 }
 
 impl Default for ReceiverConfig {
@@ -68,6 +72,7 @@ impl Default for ReceiverConfig {
             grpc_listen: Some("127.0.0.1:4317".into()),
             http_listen: Some("127.0.0.1:4318".into()),
             max_request_bytes: 8 * 1024 * 1024,
+            max_concurrent_requests: 64,
         }
     }
 }
@@ -144,7 +149,7 @@ impl Default for DecisionCacheConfig {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackpressureMode {
-    /// Fail the request immediately (gRPC `RESOURCE_EXHAUSTED`, HTTP 429).
+    /// Fail the request immediately (gRPC `UNAVAILABLE`, HTTP 429).
     Reject,
     /// Wait up to `block_timeout_ms` for queue space, then reject.
     Block,
@@ -156,6 +161,9 @@ pub enum BackpressureMode {
 pub struct BackpressureConfig {
     /// Number of export requests that may wait for the sampler.
     pub queue_capacity: usize,
+    /// Spans that may wait for the sampler (a request needs one permit per
+    /// span, capped at this value).
+    pub max_queued_spans: usize,
     /// Full-queue behaviour.
     pub mode: BackpressureMode,
     /// Maximum wait in `block` mode.
@@ -168,6 +176,7 @@ impl Default for BackpressureConfig {
     fn default() -> Self {
         BackpressureConfig {
             queue_capacity: 1_024,
+            max_queued_spans: 200_000,
             mode: BackpressureMode::Reject,
             block_timeout_ms: 200,
             retry_after_secs: 1,
@@ -202,6 +211,9 @@ pub struct ExporterConfig {
     pub flush_interval_ms: u64,
     /// Sampled-trace batches that may wait for the exporter.
     pub queue_capacity: usize,
+    /// Sampled spans that may wait for the exporter; the sampler blocks
+    /// when this is exhausted.
+    pub max_queued_spans: usize,
     /// Attempts per request (1 = no retry).
     pub max_attempts: u32,
     /// First retry delay; doubles per attempt.
@@ -218,6 +230,7 @@ impl Default for ExporterConfig {
             max_batch_spans: 1_024,
             flush_interval_ms: 200,
             queue_capacity: 64,
+            max_queued_spans: 200_000,
             max_attempts: 5,
             initial_backoff_ms: 100,
             timeout_ms: 5_000,
@@ -411,15 +424,21 @@ impl Config {
         if !(b.admission_resume_ratio > 0.0 && b.admission_resume_ratio <= 1.0) {
             return invalid("buffer.admission_resume_ratio must be in (0, 1]");
         }
-        if self.backpressure.queue_capacity == 0 {
-            return invalid("backpressure.queue_capacity must be > 0");
+        if self.backpressure.queue_capacity == 0 || self.backpressure.max_queued_spans == 0 {
+            return invalid("backpressure.queue_capacity and max_queued_spans must be > 0");
         }
-        if self.receiver.max_request_bytes == 0 {
-            return invalid("receiver.max_request_bytes must be > 0");
+        if self.receiver.max_request_bytes == 0 || self.receiver.max_concurrent_requests == 0 {
+            return invalid("receiver.max_request_bytes and max_concurrent_requests must be > 0");
         }
         let e = &self.exporter;
-        if e.max_batch_spans == 0 || e.queue_capacity == 0 || e.max_attempts == 0 {
-            return invalid("exporter.max_batch_spans, queue_capacity and max_attempts must be > 0");
+        if e.max_batch_spans == 0
+            || e.queue_capacity == 0
+            || e.max_queued_spans == 0
+            || e.max_attempts == 0
+        {
+            return invalid(
+                "exporter.max_batch_spans, queue_capacity, max_queued_spans and max_attempts must be > 0",
+            );
         }
         if e.kind != ExporterKind::None && e.endpoint.is_empty() {
             return invalid("exporter.endpoint is required unless exporter.kind = \"none\"");
@@ -473,7 +492,9 @@ fn validate_policy(p: &PolicyConfig) -> Result<(), ConfigError> {
                 return invalid(format!("{name}: key must not be empty"));
             }
             if values.is_empty() && regex.is_none() && min.is_none() && max.is_none() {
-                return invalid(format!("{name}: one of values, regex, min, max is required"));
+                return invalid(format!(
+                    "{name}: one of values, regex, min, max is required"
+                ));
             }
             if let Some(r) = regex {
                 if let Err(err) = regex::Regex::new(r) {
@@ -632,6 +653,9 @@ mod tests {
         assert!(err_of("[receiver]\nmax_request_bytes = 0").contains("max_request_bytes"));
         assert!(err_of("[exporter]\nkind = \"otlp_grpc\"").contains("endpoint"));
         assert!(err_of("[exporter]\nmax_attempts = 0").contains("max_attempts"));
+        assert!(err_of("[exporter]\nmax_queued_spans = 0").contains("max_queued_spans"));
+        assert!(err_of("[backpressure]\nmax_queued_spans = 0").contains("max_queued_spans"));
+        assert!(err_of("[receiver]\nmax_concurrent_requests = 0").contains("max_concurrent"));
         assert!(err_of("[buffer]\nbogus = 1").contains("unknown field"));
     }
 
@@ -639,7 +663,9 @@ mod tests {
     fn rejects_invalid_policies() {
         let p = |body: &str| err_of(&format!("[[policies]]\nname = \"p\"\n{body}"));
         assert!(p("type = \"status_code\"\ncodes = []").contains("codes"));
-        assert!(p("type = \"latency\"\nthreshold_ms = 5\nupper_threshold_ms = 1").contains("upper"));
+        assert!(
+            p("type = \"latency\"\nthreshold_ms = 5\nupper_threshold_ms = 1").contains("upper")
+        );
         assert!(p("type = \"probabilistic\"\npercentage = 101.0").contains("percentage"));
         assert!(p("type = \"rate_limiting\"\nspans_per_second = 0").contains("rates"));
         assert!(p("type = \"attribute\"\nkey = \"k\"").contains("one of"));
@@ -648,13 +674,18 @@ mod tests {
         assert!(p("type = \"attribute\"\nkey = \"k\"\nmin = 5.0\nmax = 1.0").contains("max < min"));
         assert!(p("type = \"span_count\"\nmin_spans = 5\nmax_spans = 1").contains("max_spans"));
         assert!(p("type = \"and\"\nsub_policies = []").contains("sub_policies"));
-        assert!(p("type = \"composite\"\nmax_total_spans_per_second = 0\nsub_policies = []")
-            .contains("max_total"));
+        assert!(
+            p("type = \"composite\"\nmax_total_spans_per_second = 0\nsub_policies = []")
+                .contains("max_total")
+        );
         let unknown_alloc = p(r#"type = "composite"
 max_total_spans_per_second = 10
 rate_allocation = [{ policy = "nope", percent = 10 }]
 sub_policies = [{ name = "a", type = "always_sample" }]"#);
-        assert!(unknown_alloc.contains("unknown sub-policy"), "{unknown_alloc}");
+        assert!(
+            unknown_alloc.contains("unknown sub-policy"),
+            "{unknown_alloc}"
+        );
         let over = p(r#"type = "composite"
 max_total_spans_per_second = 10
 rate_allocation = [{ policy = "a", percent = 60 }, { policy = "b", percent = 60 }]

@@ -1,7 +1,8 @@
 //! OTLP/gRPC receiver (`opentelemetry.proto.collector.trace.v1.TraceService/Export`).
 
-use std::net::SocketAddr;
 use std::future::Future;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
     TraceService, TraceServiceServer,
@@ -10,6 +11,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
     ExportTracePartialSuccess, ExportTraceServiceResponse,
 };
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tonic::codec::CompressionEncoding;
 use tonic::transport::server::TcpIncoming;
 use tonic::{Request, Response, Status};
@@ -59,17 +61,22 @@ impl TraceService for GrpcReceiver {
 }
 
 /// Serve the gRPC receiver on an already-bound listener until `shutdown`
-/// resolves.
+/// resolves. `in_flight` is shared with the HTTP receiver and caps the
+/// number of requests being decoded at once.
 pub async fn serve(
     listener: TcpListener,
     handle: IngestHandle,
     max_request_bytes: usize,
+    in_flight: Arc<Semaphore>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
     let svc = TraceServiceServer::new(GrpcReceiver::new(handle))
         .accept_compressed(CompressionEncoding::Gzip)
         .max_decoding_message_size(max_request_bytes);
     tonic::transport::Server::builder()
+        .layer(tower::limit::GlobalConcurrencyLimitLayer::with_semaphore(
+            in_flight,
+        ))
         .add_service(svc)
         .serve_with_incoming_shutdown(TcpIncoming::from(listener), shutdown)
         .await
