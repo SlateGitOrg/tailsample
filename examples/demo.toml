@@ -1,0 +1,49 @@
+# Configuration used by `tailsample demo` (embedded in the binary).
+# Listen addresses and the exporter endpoint are overridden at runtime with
+# ephemeral loopback ports.
+
+[buffer]
+decision_wait_ms = 3000
+max_traces = 20000
+max_bytes = 67108864
+eviction = "decide_early"
+tick_interval_ms = 50
+
+[backpressure]
+queue_capacity = 512
+mode = "block"
+block_timeout_ms = 250
+
+[exporter]
+kind = "otlp_grpc"
+endpoint = "http://127.0.0.1:1"
+max_batch_spans = 512
+flush_interval_ms = 100
+
+[[policies]]
+name = "budget"
+type = "composite"
+max_total_spans_per_second = 3000
+rate_allocation = [
+  { policy = "errors", percent = 60 },
+  { policy = "slow", percent = 25 },
+]
+
+  [[policies.sub_policies]]
+  name = "errors"
+  type = "status_code"
+  codes = ["ERROR"]
+
+  [[policies.sub_policies]]
+  name = "slow"
+  type = "latency"
+  threshold_ms = 1000
+
+  # Remaining 15%: 5% of traffic, health checks excluded.
+  [[policies.sub_policies]]
+  name = "baseline"
+  type = "and"
+  sub_policies = [
+    { name = "five-percent", type = "probabilistic", percentage = 5.0 },
+    { name = "not-health", type = "attribute", key = "http.route", values = ["/healthz"], invert = true },
+  ]

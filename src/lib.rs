@@ -16,6 +16,7 @@
 pub mod buffer;
 pub mod cache;
 pub mod config;
+pub mod demo;
 pub mod exporter;
 pub mod ids;
 pub mod loadgen;
@@ -24,7 +25,9 @@ pub mod policy;
 pub mod receiver;
 pub mod runtime;
 pub mod sampler;
+pub mod server;
 pub mod sim;
+pub mod sink;
 pub mod telemetry;
 
 pub use config::Config;

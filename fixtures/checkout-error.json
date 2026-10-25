@@ -1,0 +1,56 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "fixture-checkout" } },
+          { "key": "service.version", "value": { "stringValue": "9.9.9" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "fixture", "version": "1" },
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba902b7",
+              "name": "POST /checkout",
+              "kind": 2,
+              "startTimeUnixNano": "1760000000000000000",
+              "endTimeUnixNano": "1760000000250000000",
+              "attributes": [
+                { "key": "http.request.method", "value": { "stringValue": "POST" } },
+                { "key": "http.route", "value": { "stringValue": "/checkout" } },
+                { "key": "http.response.status_code", "value": { "intValue": "500" } }
+              ],
+              "status": { "code": 2, "message": "payment declined upstream" }
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "b7ad6b7169203331",
+              "parentSpanId": "00f067aa0ba902b7",
+              "name": "PaymentService/Charge",
+              "kind": 3,
+              "startTimeUnixNano": "1760000000010000000",
+              "endTimeUnixNano": "1760000000240000000",
+              "attributes": [
+                { "key": "rpc.system", "value": { "stringValue": "grpc" } },
+                { "key": "rpc.grpc.status_code", "value": { "intValue": "13" } }
+              ],
+              "events": [
+                {
+                  "timeUnixNano": "1760000000240000000",
+                  "name": "exception",
+                  "attributes": [
+                    { "key": "exception.type", "value": { "stringValue": "UpstreamError" } }
+                  ]
+                }
+              ],
+              "status": { "code": 2, "message": "INTERNAL" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
