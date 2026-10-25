@@ -218,6 +218,103 @@ fn memory_bound(traces: u64) {
     println!();
 }
 
+/// One span per request, each request carrying its own 4 KiB resource
+/// attribute (an SDK with a simple/per-span processor and large k8s resource
+/// attributes). Shared context dominates memory here, so this checks that
+/// the buffer charges it against `max_bytes`.
+fn small_batch_request(i: u64) -> ExportTraceServiceRequest {
+    use opentelemetry_proto::tonic::resource::v1::Resource;
+    use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
+    use tailsample::model::kv_str;
+    let trace = tailsample::ids::TraceId::from_u128(u128::from(i) + 1);
+    ExportTraceServiceRequest {
+        resource_spans: vec![ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![
+                    kv_str("service.name", "checkout"),
+                    kv_str("k8s.pod.labels", "x".repeat(4 * 1024)),
+                ],
+                ..Default::default()
+            }),
+            scope_spans: vec![ScopeSpans {
+                spans: vec![Span {
+                    trace_id: trace.0.to_vec(),
+                    span_id: 1u64.to_be_bytes().to_vec(),
+                    name: "GET /checkout".into(),
+                    start_time_unix_nano: 1,
+                    end_time_unix_nano: 2,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    }
+}
+
+fn memory_small_batches(requests: u64) {
+    println!("## Memory bound with one span per request\n");
+    println!(
+        "Workload: {requests} requests of one span each, every request carrying its own 4 KiB"
+    );
+    println!("resource attribute, 10 min decision wait (only the memory limit removes traces).");
+    println!("Requests are built one at a time, so `sampler heap` is the counting allocator's");
+    println!(
+        "high-water mark above the live heap at the start of the row; it includes the decision"
+    );
+    println!(
+        "cache, which grows by one entry per decided or evicted trace. `buffer heap` is the live"
+    );
+    println!("heap the buffer frees when flushed at the end of the row (buffer full).\n");
+    println!("| max_bytes | eviction | peak est. buffer | of which shared context | buffered spans | buffer heap | buffer heap / limit | sampler heap (incl. decision cache) | cached decisions |");
+    println!("|---:|---|---:|---:|---:|---:|---:|---:|---:|");
+    for (limit_mib, eviction) in [
+        (1usize, EvictionPolicy::DecideEarly),
+        (8, EvictionPolicy::DecideEarly),
+        (8, EvictionPolicy::DropOldest),
+        (8, EvictionPolicy::RejectNew),
+    ] {
+        let mut cfg = reference_config();
+        cfg.buffer.max_bytes = limit_mib * 1024 * 1024;
+        cfg.buffer.max_traces = 1_000_000;
+        cfg.buffer.decision_wait_ms = 600_000;
+        cfg.buffer.eviction = eviction;
+        let mut sampler = Sampler::new(&cfg).expect("sampler");
+        let mut out = Vec::new();
+        let (mut peak_est, mut peak_ctx) = (0, 0);
+        let base = reset_peak();
+        for i in 0..requests {
+            let flat = flatten(small_batch_request(i));
+            sampler.ingest(flat.records, i, &mut out);
+            out.clear();
+            let g = sampler.gauges();
+            if g.bytes > peak_est {
+                peak_est = g.bytes;
+                peak_ctx = g.context_bytes;
+            }
+        }
+        let heap = PEAK.load(Ordering::Relaxed).saturating_sub(base);
+        let g = sampler.gauges();
+        let before_flush = LIVE.load(Ordering::Relaxed);
+        sampler.flush(requests, &mut out);
+        out.clear();
+        out.shrink_to_fit();
+        let buffer_heap = before_flush.saturating_sub(LIVE.load(Ordering::Relaxed));
+        println!(
+            "| {limit_mib} MiB | {eviction:?} | {:.2} MiB | {:.2} MiB | {} | {:.2} MiB | {:.2} | {:.2} MiB | {} |",
+            mib(peak_est),
+            mib(peak_ctx),
+            g.spans,
+            mib(buffer_heap),
+            buffer_heap as f64 / cfg.buffer.max_bytes as f64,
+            mib(heap),
+            g.cache_sizes.0 + g.cache_sizes.1,
+        );
+        drop(sampler);
+    }
+    println!();
+}
+
 struct Slow(Duration);
 
 #[tonic::async_trait]
@@ -316,6 +413,7 @@ fn main() {
     );
     core_throughput(core_traces, runs);
     memory_bound(mem_traces);
+    memory_small_batches(if quick { 5_000 } else { 20_000 });
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
