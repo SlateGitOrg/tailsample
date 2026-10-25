@@ -253,7 +253,23 @@ async fn e2e(
                 .expect("connect");
             let (mut ok, mut refused, mut i) = (0u64, 0u64, c);
             while Instant::now() < deadline {
-                let req = input[i % input.len()].clone();
+                let mut req = input[i % input.len()].clone();
+                // Every pass over the input gets fresh trace ids, so resent
+                // spans are new traces rather than cheap decision-cache hits.
+                let round = (i / input.len()) as u64;
+                if round > 0 {
+                    let salt = round.wrapping_mul(0x9e37_79b9_7f4a_7c15).to_be_bytes();
+                    for span in req
+                        .resource_spans
+                        .iter_mut()
+                        .flat_map(|rs| rs.scope_spans.iter_mut())
+                        .flat_map(|ss| ss.spans.iter_mut())
+                    {
+                        for (b, s) in span.trace_id.iter_mut().zip(salt) {
+                            *b ^= s;
+                        }
+                    }
+                }
                 let n = span_count(&req) as u64;
                 match client.export(req).await {
                     Ok(_) => ok += n,
@@ -307,8 +323,9 @@ fn main() {
         .expect("runtime");
     rt.block_on(async {
         println!("## End-to-end OTLP/gRPC over loopback\n");
-        println!("Clients resend pre-generated requests (<=512 spans each) as fast as possible; a refused");
-        println!("request is counted and retried after 5 ms. Server: 4 tokio worker threads, reference policies, 1 s decision wait.\n");
+        println!("Clients replay pre-generated requests (<=512 spans each) as fast as possible, rewriting");
+        println!("trace ids on every pass so all traffic is new traces; a refused request is counted and");
+        println!("retried after 5 ms. Server: 4 tokio worker threads, reference policies, 1 s decision wait.\n");
         println!("| scenario | clients | duration | accepted spans/s | refused requests | traces sampled | peak heap |");
         println!("|---|---:|---:|---:|---:|---:|---:|");
         let input: Arc<Vec<ExportTraceServiceRequest>> = Arc::new(

@@ -72,7 +72,7 @@ impl Default for ReceiverConfig {
             grpc_listen: Some("127.0.0.1:4317".into()),
             http_listen: Some("127.0.0.1:4318".into()),
             max_request_bytes: 8 * 1024 * 1024,
-            max_concurrent_requests: 64,
+            max_concurrent_requests: 32,
         }
     }
 }
@@ -176,7 +176,7 @@ impl Default for BackpressureConfig {
     fn default() -> Self {
         BackpressureConfig {
             queue_capacity: 1_024,
-            max_queued_spans: 200_000,
+            max_queued_spans: 100_000,
             mode: BackpressureMode::Reject,
             block_timeout_ms: 200,
             retry_after_secs: 1,
@@ -230,7 +230,7 @@ impl Default for ExporterConfig {
             max_batch_spans: 1_024,
             flush_interval_ms: 200,
             queue_capacity: 64,
-            max_queued_spans: 200_000,
+            max_queued_spans: 100_000,
             max_attempts: 5,
             initial_backoff_ms: 100,
             timeout_ms: 5_000,

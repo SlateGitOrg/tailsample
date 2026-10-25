@@ -5,6 +5,7 @@
 grpc_listen = "127.0.0.1:4317"
 http_listen = "127.0.0.1:4318"
 max_request_bytes = 8388608
+max_concurrent_requests = 32   # shared by both receivers; bounds decode memory
 
 [buffer]
 decision_wait_ms = 5000
@@ -19,7 +20,8 @@ sampled_capacity = 100000
 not_sampled_capacity = 200000
 
 [backpressure]
-queue_capacity = 1024
+queue_capacity = 1024           # requests waiting for the sampler
+max_queued_spans = 100000      # ... and the spans inside them
 mode = "reject"
 retry_after_secs = 1
 
@@ -29,6 +31,7 @@ endpoint = "http://127.0.0.1:14317"
 max_batch_spans = 1024
 flush_interval_ms = 200
 queue_capacity = 64
+max_queued_spans = 100000
 max_attempts = 5
 
 # Policies are evaluated in order; the first one that samples wins.
