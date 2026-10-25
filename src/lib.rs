@@ -20,6 +20,8 @@ pub mod exporter;
 pub mod ids;
 pub mod model;
 pub mod policy;
+pub mod receiver;
+pub mod runtime;
 pub mod sampler;
 pub mod telemetry;
 
