@@ -174,7 +174,10 @@ Roughly, peak heap is
 + (decision_cache.sampled_capacity + not_sampled_capacity) x ~70 bytes
 ```
 
-The decode term is a worst case (every in-flight request at the size limit);
+The two queue terms are bounded by span count, not bytes, and a queued span
+keeps its request's resource/scope context alive, so with one span per
+request "avg span size" must include that context (about 4.7 KB per span in
+the benchmark's 4 KiB-resource workload). The decode term is a worst case (every in-flight request at the size limit);
 protobuf decodes into Rust structs a few times larger than the wire size.
 The benchmark's span sizes are about 700-800 bytes per span in memory.
 
