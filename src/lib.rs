@@ -18,11 +18,13 @@ pub mod cache;
 pub mod config;
 pub mod exporter;
 pub mod ids;
+pub mod loadgen;
 pub mod model;
 pub mod policy;
 pub mod receiver;
 pub mod runtime;
 pub mod sampler;
+pub mod sim;
 pub mod telemetry;
 
 pub use config::Config;

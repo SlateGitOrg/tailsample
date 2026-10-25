@@ -510,7 +510,7 @@ fn validate_policy(p: &PolicyConfig) -> Result<(), ConfigError> {
             }
         }
         PolicyKind::And { sub_policies } => {
-            validate_sub_policies(name, sub_policies)?;
+            validate_sub_policies(name, sub_policies, false)?;
         }
         PolicyKind::Composite {
             max_total_spans_per_second,
@@ -520,7 +520,7 @@ fn validate_policy(p: &PolicyConfig) -> Result<(), ConfigError> {
             if *max_total_spans_per_second == 0 {
                 return invalid(format!("{name}: max_total_spans_per_second must be > 0"));
             }
-            validate_sub_policies(name, sub_policies)?;
+            validate_sub_policies(name, sub_policies, true)?;
             let mut total = 0.0;
             let mut seen = HashSet::new();
             for a in rate_allocation {
@@ -546,19 +546,25 @@ fn validate_policy(p: &PolicyConfig) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn validate_sub_policies(name: &str, subs: &[PolicyConfig]) -> Result<(), ConfigError> {
+/// Composite policies may only appear at top level; `and` may appear at top
+/// level or directly inside a composite (`allow_and`), never inside another
+/// `and`. Nesting is therefore at most two levels deep.
+fn validate_sub_policies(
+    name: &str,
+    subs: &[PolicyConfig],
+    allow_and: bool,
+) -> Result<(), ConfigError> {
     if subs.is_empty() {
         return invalid(format!("{name}: sub_policies must not be empty"));
     }
-    if subs.iter().any(|s| {
-        matches!(
-            s.kind,
-            PolicyKind::Composite { .. } | PolicyKind::And { .. }
-        )
-    }) {
-        return invalid(format!(
-            "{name}: sub-policies cannot themselves be composite or and"
-        ));
+    for s in subs {
+        let nested_and = matches!(s.kind, PolicyKind::And { .. });
+        if matches!(s.kind, PolicyKind::Composite { .. }) || (nested_and && !allow_and) {
+            return invalid(format!(
+                "{name}: sub-policy {:?} cannot be a composite, or an and inside an and",
+                s.name
+            ));
+        }
     }
     validate_policies(subs)
 }
@@ -656,7 +662,19 @@ sub_policies = [{ name = "a", type = "always_sample" }, { name = "b", type = "al
         assert!(over.contains("sums to"), "{over}");
         let nested = p(r#"type = "and"
 sub_policies = [{ name = "a", type = "and", sub_policies = [{ name = "x", type = "always_sample" }] }]"#);
-        assert!(nested.contains("cannot themselves"), "{nested}");
+        assert!(nested.contains("cannot be"), "{nested}");
+        let comp_in_comp = p(r#"type = "composite"
+max_total_spans_per_second = 10
+sub_policies = [{ name = "a", type = "composite", max_total_spans_per_second = 1, sub_policies = [{ name = "x", type = "always_sample" }] }]"#);
+        assert!(comp_in_comp.contains("cannot be"), "{comp_in_comp}");
+        Config::from_toml_str(
+            r#"[[policies]]
+name = "c"
+type = "composite"
+max_total_spans_per_second = 10
+sub_policies = [{ name = "a", type = "and", sub_policies = [{ name = "x", type = "always_sample" }] }]"#,
+        )
+        .expect("and inside composite is allowed");
         let dup = err_of(
             "[[policies]]\nname = \"a\"\ntype = \"always_sample\"\n[[policies]]\nname = \"a\"\ntype = \"always_sample\"",
         );

@@ -1,0 +1,61 @@
+# Reference configuration: keep every error trace, keep slow traces, keep a
+# budgeted sample of everything else, never keep health checks.
+
+[receiver]
+grpc_listen = "127.0.0.1:4317"
+http_listen = "127.0.0.1:4318"
+max_request_bytes = 8388608
+
+[buffer]
+decision_wait_ms = 5000
+max_traces = 50000
+max_bytes = 134217728          # 128 MiB of estimated span data
+max_spans_per_trace = 2000
+eviction = "decide_early"
+tick_interval_ms = 100
+
+[decision_cache]
+sampled_capacity = 100000
+not_sampled_capacity = 200000
+
+[backpressure]
+queue_capacity = 1024
+mode = "reject"
+retry_after_secs = 1
+
+[exporter]
+kind = "otlp_grpc"
+endpoint = "http://127.0.0.1:14317"
+max_batch_spans = 1024
+flush_interval_ms = 200
+queue_capacity = 64
+max_attempts = 5
+
+# Policies are evaluated in order; the first one that samples wins.
+[[policies]]
+name = "budget"
+type = "composite"
+max_total_spans_per_second = 3000
+rate_allocation = [
+  { policy = "errors", percent = 60 },
+  { policy = "slow", percent = 25 },
+]
+
+  [[policies.sub_policies]]
+  name = "errors"
+  type = "status_code"
+  codes = ["ERROR"]
+
+  [[policies.sub_policies]]
+  name = "slow"
+  type = "latency"
+  threshold_ms = 1000
+
+  # Remaining 15% of the budget: 5% of traffic, health checks excluded.
+  [[policies.sub_policies]]
+  name = "baseline"
+  type = "and"
+  sub_policies = [
+    { name = "five-percent", type = "probabilistic", percentage = 5.0 },
+    { name = "not-health", type = "attribute", key = "http.route", values = ["/healthz"], invert = true },
+  ]
