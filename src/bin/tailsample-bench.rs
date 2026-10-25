@@ -290,14 +290,15 @@ async fn e2e(
         refused += b;
     }
     let peak = PEAK.load(Ordering::Relaxed).saturating_sub(base);
-    let tel = server.telemetry();
-    let core = tel.core();
+    // Live counter, read when the clients stop (the core snapshot is only
+    // refreshed on sampler ticks, so it is not used here).
+    let exported = server.telemetry().export_spans_ok.get();
     // Do not wait for a slow exporter to drain during the benchmark.
     drop(server);
     println!(
-        "| {label} | {clients} | {secs} s | {:.0} | {refused} | {} | {:.1} MiB |",
+        "| {label} | {clients} | {secs} s | {:.0} | {refused} | {:.0} | {:.1} MiB |",
         ok as f64 / secs as f64,
-        core.stats.traces_sampled,
+        exported as f64 / secs as f64,
         mib(peak)
     );
 }
@@ -326,7 +327,7 @@ fn main() {
         println!("Clients replay pre-generated requests (<=512 spans each) as fast as possible, rewriting");
         println!("trace ids on every pass so all traffic is new traces; a refused request is counted and");
         println!("retried after 5 ms. Server: 4 tokio worker threads, reference policies, 1 s decision wait.\n");
-        println!("| scenario | clients | duration | accepted spans/s | refused requests | traces sampled | peak heap |");
+        println!("| scenario | clients | duration | accepted spans/s | refused requests | exported spans/s | peak heap (clients + server) |");
         println!("|---|---:|---:|---:|---:|---:|---:|");
         let input: Arc<Vec<ExportTraceServiceRequest>> = Arc::new(
             workload(if quick { 3_000 } else { 20_000 }, 20_000.0, 77)
