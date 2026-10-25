@@ -1,8 +1,8 @@
-- date: 2026-10-25T06:35Z
+- date: 2026-10-25T06:52Z
 - os/arch: Darwin arm64
 - cpu: Apple M1 Pro, 8 logical cores
 - rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
-- commit: f60d024
+- commit: 1ec75ca
 
 # tailsample policy evaluation
 
@@ -36,9 +36,9 @@ traffic against a 5 s decision wait).
 
 | eviction | error traces kept | slow kept | traces decided early | traces dropped undecided | spans refused | peak est. bytes |
 |---|---:|---:|---:|---:|---:|---:|
-| DecideEarly | 97.5% | 19.0% | 11487 | 0 | 0 | 4.0 MiB |
-| DropOldest | 3.0% | 9.1% | 0 | 11487 | 0 | 4.0 MiB |
-| RejectNew | 19.8% | 8.2% | 0 | 0 | 128885 | 4.0 MiB |
+| DecideEarly | 97.5% | 19.5% | 11503 | 0 | 0 | 4.0 MiB |
+| DropOldest | 3.0% | 9.1% | 0 | 11503 | 0 | 4.0 MiB |
+| RejectNew | 19.8% | 8.2% | 0 | 0 | 129151 | 4.0 MiB |
 
 ## 4. Decision wait versus completeness
 
