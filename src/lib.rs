@@ -13,8 +13,11 @@
 
 #![warn(missing_docs)]
 
+pub mod buffer;
+pub mod cache;
 pub mod config;
 pub mod ids;
+pub mod model;
 
 pub use config::Config;
 pub use ids::TraceId;
