@@ -327,16 +327,20 @@ mod tests {
         assert!(s.next_event_ms().is_none());
     }
 
+    /// Refuses the first `refuse_first` calls overall, then accepts. A
+    /// global prefix (rather than "every n-th call") keeps the test
+    /// deterministic under concurrency: no request can be refused more than
+    /// `refuse_first` times, which is below `max_attempts`.
     struct Flaky {
         calls: AtomicU64,
-        refuse_every: u64,
+        refuse_first: u64,
     }
 
     #[tonic::async_trait]
     impl Exporter for Flaky {
         async fn export(&self, _r: ExportTraceServiceRequest) -> Result<(), ExportError> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
-            if n % self.refuse_every == 0 {
+            if n < self.refuse_first {
                 Err(ExportError::retryable("busy"))
             } else {
                 Ok(())
@@ -358,14 +362,15 @@ mod tests {
         );
         let target: Arc<dyn Exporter> = Arc::new(Flaky {
             calls: AtomicU64::new(0),
-            refuse_every: 3,
+            refuse_first: 5,
         });
         let opts = LiveOptions {
             initial_backoff: Duration::from_millis(1),
             ..LiveOptions::default()
         };
+        assert!(u64::from(opts.max_attempts) > 5);
         let r = run_live(&mut s, target, &opts).await;
-        assert!(r.retries > 0);
+        assert_eq!(r.retries, 5);
         assert_eq!(r.requests_failed, 0);
         assert!(r.spans_ok > 40);
     }
