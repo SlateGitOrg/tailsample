@@ -19,7 +19,9 @@ pub mod config;
 pub mod ids;
 pub mod model;
 pub mod policy;
+pub mod sampler;
 
 pub use config::Config;
 pub use ids::TraceId;
 pub use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+pub use sampler::{Released, Sampler, SamplerStats};
