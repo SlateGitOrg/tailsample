@@ -16,10 +16,12 @@
 pub mod buffer;
 pub mod cache;
 pub mod config;
+pub mod exporter;
 pub mod ids;
 pub mod model;
 pub mod policy;
 pub mod sampler;
+pub mod telemetry;
 
 pub use config::Config;
 pub use ids::TraceId;
