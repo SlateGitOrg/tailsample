@@ -224,9 +224,9 @@ second of traffic against a 5 s wait):
 
 | eviction | error traces kept | slow kept | spans refused |
 |---|---:|---:|---:|
-| `decide_early` | 97.5% | 19.0% | 0 |
+| `decide_early` | 97.5% | 19.5% | 0 |
 | `drop_oldest` | 3.0% | 9.1% | 0 |
-| `reject_new` | 19.8% | 8.2% | 128885 |
+| `reject_new` | 19.8% | 8.2% | 129151 |
 
 `decide_early` keeps errors because error spans are usually already in the
 buffer when a trace is evicted; latency decisions suffer because the slow
@@ -241,24 +241,38 @@ shared with other build jobs, so absolute numbers are noisy.
 
 | What | Result |
 |---|---|
-| Core sampler, single thread, simulated clock, reference policies | median **1.74M spans/s** over 3 runs (1.63M-1.78M), about 575 ns/span |
-| End-to-end OTLP/gRPC over loopback, 8 clients, null exporter | **322k spans/s** accepted |
-| Same, exporter capped at ~51k spans/s, every trace sampled | 42k spans/s accepted, 6,897 requests refused (and retried) |
-| Real heap per configured byte of buffer (`decide_early`, 8-128 MiB) | **1.17-1.21x** `max_bytes` |
+| Core sampler, single thread, simulated clock, reference policies | median **1.73M spans/s** over 3 runs (1.28M-1.74M), about 577 ns/span |
+| End-to-end OTLP/gRPC over loopback, 8 clients, null exporter | **320k spans/s** accepted |
+| Same, exporter capped at ~51k spans/s, every trace sampled | 39k spans/s accepted, 6,992 requests refused (and retried) |
+| Real heap per configured byte of buffer, generator workload (`decide_early`, 8-128 MiB) | **1.16-1.21x** `max_bytes` |
+| Same, one span per request with its own 4 KiB resource (1-8 MiB) | buffer heap **1.16-1.17x** `max_bytes` |
 
 The memory benchmark streams 60,000 traces at 4,000/s with a 5 s wait (an
 unbounded buffer would need about 240k spans) through a counting global
 allocator. Real heap attributable to the sampler stays at about 1.2x
 `max_bytes` for every limit and eviction policy tried, because the byte
-estimate leaves out container slack and shared resource context: size
-`max_bytes` at about 80% of the memory you want the buffer to use. The
-end-to-end peak heap figures (325 MiB null exporter, 138 MiB capped) include
-the in-process load clients and a 256 MiB buffer limit; see the results file.
+estimate leaves out container slack: size `max_bytes` at about 80% of the
+memory you want the buffer to use.
+
+The estimate covers every span's own allocations plus each distinct
+resource/scope context the buffered spans keep alive, charged once while any
+buffered span references it. That matters when clients send one span per
+request (an SDK with a simple/per-span processor) with large resource
+attributes: there the context is most of the memory. The second memory table
+streams 20,000 such requests, each with a 4 KiB resource attribute; the
+buffer holds 215 spans in 1 MiB (93% of the estimate is resource context) and
+its real heap stays at 1.17x `max_bytes`. Before this was charged, a 1 MiB
+buffer held all 3,000 spans of the same pattern, about 12 MiB of resource
+data (`tests/memory.rs` keeps that from coming back). The decision cache is
+a separate term: in that run it reached about 20k entries, roughly 70 bytes
+each. The end-to-end peak heap figures (314 MiB null exporter, 105 MiB capped)
+include the in-process load clients and a 256 MiB buffer limit; see the
+results file.
 
 ## Tests and coverage
 
 ```sh
-make test       # 91 tests: unit, property, simulation and loopback end-to-end
+make test       # 95 tests: unit, property, simulation and loopback end-to-end
 make coverage   # cargo llvm-cov, fails under 80% line coverage
 ```
 
@@ -334,9 +348,12 @@ The full list, with the cost of each if it is wrong, is in
 - **No TLS and no authentication** on receivers or the exporter (plaintext
   `http://` only). Put it behind a TLS-terminating proxy on a trusted
   network.
-- **Memory bound is an estimate.** `max_bytes` bounds estimated span bytes;
-  real heap was about 1.2x on the bundled workload and will differ for other
-  span shapes. Queues and in-flight decoding add to it (formula in
+- **Memory bound is an estimate.** `max_bytes` bounds estimated bytes of
+  buffered spans plus the distinct resource/scope contexts they reference;
+  real heap was about 1.2x on both benchmark workloads (batched generator
+  traffic, and one span per request with a 4 KiB resource) and will differ
+  for other span shapes. Identical resources sent in separate requests are
+  charged (and stored) once per request; they are not deduplicated. Queues and in-flight decoding add to it (formula in
   `docs/ARCHITECTURE.md`). One request larger than `max_queued_spans` can
   briefly exceed the queue bound.
 - **Decision wait starts at the first span**, not at root-span end, so

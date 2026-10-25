@@ -126,13 +126,30 @@ need a min-heap (O(log n)) or a hashed timer wheel.
 ## 4. Memory bound and eviction
 
 The buffer holds at most `max_traces` traces and `max_bytes` of *estimated*
-span data. The estimate (`model::estimate_span_bytes`) is the size of the
-`SpanRecord` plus the capacity of every owned allocation reachable from the
-span (ids, name, attributes, events, links, nested values). Shared
-resource/scope context and container slack are not attributed. The
-benchmark's counting allocator measures real heap at about **1.2x** the
-estimate for the bundled workload (`bench/bench-results.md`), so size
-`max_bytes` at roughly 80% of the memory you want the buffer to use.
+data. The estimate has two parts:
+
+- **Per span** (`model::estimate_span_bytes`): the size of the `SpanRecord`
+  plus the capacity of every owned allocation reachable from the span (ids,
+  name, attributes, events, links, nested values).
+- **Per distinct shared context** (`model::estimate_resource_bytes`,
+  `estimate_scope_bytes`): spans keep the `Arc`'d resource and scope of the
+  request they arrived in alive. The buffer reference-counts each scope
+  context by `Arc` address (one reference per buffered span) and each
+  resource context (one reference per charged scope), charges a context's
+  estimate when its first referencing span is stored and releases it when
+  the last one leaves. `TraceBuffer::record_cost` gives the incremental cost
+  of storing a span (its own bytes plus any context not yet charged), which
+  is what the oversize check and `make_room` use; it is recomputed after each
+  eviction, since evicting a trace can release the context the new span
+  shares. A charged context is kept alive by the span holding the
+  reference, so its address cannot be reused while it is a map key.
+
+Without the second part, one-span-per-request traffic with a 4 KiB resource
+let a 1 MiB buffer retain about 12 MiB of resource data. Container slack is
+still not attributed. The benchmark's counting allocator measures real
+buffer heap at about **1.2x** the estimate on both the batched generator
+workload and the one-span-per-request workload (`bench/bench-results.md`),
+so size `max_bytes` at roughly 80% of the memory you want the buffer to use.
 
 When admitting a span would exceed a limit:
 
@@ -154,7 +171,7 @@ Roughly, peak heap is
   1.2 x buffer.max_bytes
 + (backpressure.max_queued_spans + exporter.max_queued_spans + exporter.max_batch_spans) x avg span size
 + receiver.max_concurrent_requests x max_request_bytes x decode expansion
-+ (decision_cache.sampled_capacity + not_sampled_capacity) x ~50 bytes
++ (decision_cache.sampled_capacity + not_sampled_capacity) x ~70 bytes
 ```
 
 The decode term is a worst case (every in-flight request at the size limit);
@@ -187,9 +204,9 @@ capacity, and the refusal surfaces at the receiver as a retryable OTLP
 error. The benchmark's capped-exporter scenario shows the effect
 (`make bench`, `bench/bench-results.md`): with every trace sampled and an
 exporter that sleeps 20 ms per request of at most 1,024 spans (a ceiling of
-about 51k spans/s), accepted throughput drops from about 322k spans/s (null
-exporter) to about 42k spans/s, roughly 6.9k requests are refused and
-retried by the clients, and peak heap stays at 138 MiB instead of growing.
+about 51k spans/s), accepted throughput drops from about 320k spans/s (null
+exporter) to about 39k spans/s, roughly 7.0k requests are refused and
+retried by the clients, and peak heap stays at 105 MiB instead of growing.
 Exported spans/s over the 10 s window (33k) is below the accepted rate
 because the first second is spent filling the decision wait.
 
