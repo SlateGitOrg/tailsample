@@ -7,7 +7,9 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope, KeyValue};
+use opentelemetry_proto::tonic::common::v1::{
+    any_value, AnyValue, EntityRef, InstrumentationScope, KeyValue,
+};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
 
@@ -167,9 +169,52 @@ pub fn span_count(req: &ExportTraceServiceRequest) -> usize {
         .sum()
 }
 
+/// Bytes of an `Arc` allocation header (strong + weak counts).
+const ARC_HEADER: usize = 2 * size_of::<usize>();
+
+/// Estimate the heap bytes of one shared resource context: its `Arc`
+/// allocation plus every owned allocation reachable from it. The trace
+/// buffer charges this once per distinct context it retains, see
+/// [`crate::buffer::TraceBuffer::record_cost`].
+pub fn estimate_resource_bytes(ctx: &ResourceContext) -> usize {
+    ARC_HEADER
+        + size_of::<ResourceContext>()
+        + ctx.schema_url.capacity()
+        + ctx.resource.as_ref().map_or(0, |r| {
+            attrs_bytes(&r.attributes)
+                + r.entity_refs.capacity() * size_of::<EntityRef>()
+                + r.entity_refs
+                    .iter()
+                    .map(|e| {
+                        e.schema_url.capacity()
+                            + e.r#type.capacity()
+                            + strings_bytes(&e.id_keys)
+                            + strings_bytes(&e.description_keys)
+                    })
+                    .sum::<usize>()
+        })
+}
+
+/// Estimate the heap bytes of one shared scope context, excluding the
+/// resource context it points to (charged separately, since many scopes can
+/// share one resource).
+pub fn estimate_scope_bytes(ctx: &ScopeContext) -> usize {
+    ARC_HEADER
+        + size_of::<ScopeContext>()
+        + ctx.schema_url.capacity()
+        + ctx.scope.as_ref().map_or(0, |s| {
+            s.name.capacity() + s.version.capacity() + attrs_bytes(&s.attributes)
+        })
+}
+
+fn strings_bytes(v: &Vec<String>) -> usize {
+    v.capacity() * size_of::<String>() + v.iter().map(String::capacity).sum::<usize>()
+}
+
 /// Estimate the heap bytes retained by a buffered span: the record itself
 /// plus the capacity of every owned allocation reachable from the span.
-/// Shared resource / scope context is not attributed to individual spans.
+/// Shared resource / scope context is not included here; the buffer charges
+/// it once per distinct context (see [`estimate_resource_bytes`]).
 pub fn estimate_span_bytes(span: &Span) -> usize {
     size_of::<SpanRecord>()
         + span.trace_id.capacity()

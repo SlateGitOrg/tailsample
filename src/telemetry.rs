@@ -200,8 +200,13 @@ impl Telemetry {
         gauge("tailsample_buffer_spans", "Buffered spans.", g.spans as f64);
         gauge(
             "tailsample_buffer_bytes",
-            "Estimated buffered bytes.",
+            "Estimated buffered bytes (spans plus shared resource/scope context).",
             g.bytes as f64,
+        );
+        gauge(
+            "tailsample_buffer_context_bytes",
+            "Part of tailsample_buffer_bytes charged for distinct resource/scope contexts.",
+            g.context_bytes as f64,
         );
         gauge(
             "tailsample_decision_cache_sampled",
@@ -244,6 +249,7 @@ mod tests {
             .sampled_by_policy
             .insert("budget/\"err\"".into(), 2);
         snap.gauges.admission_open = true;
+        snap.gauges.context_bytes = 640;
         t.publish(snap);
         let text = t.render_prometheus();
         assert!(text.contains("tailsample_receiver_requests_grpc_total 1"));
@@ -251,6 +257,7 @@ mod tests {
         assert!(text.contains("tailsample_spans_total{outcome=\"received\"} 9"));
         assert!(text.contains("policy=\"budget/\\\"err\\\"\"} 2"));
         assert!(text.contains("tailsample_admission_open 1"));
+        assert!(text.contains("tailsample_buffer_context_bytes 640"));
         assert!(text.contains("tailsample_ingest_queue_high_water 3"));
         assert_eq!(t.core().stats.spans_received, 9);
     }

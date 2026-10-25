@@ -6,14 +6,35 @@
 //! FIFO, so both "oldest trace" (for eviction) and "next expired trace" (for
 //! the decision tick) are the FIFO front: O(1) amortised per operation.
 //!
+//! Memory accounting has two parts. Every span is charged its own estimated
+//! size. The resource and scope context a span arrived with is shared through
+//! `Arc`s by all spans of the same `ResourceSpans` / `ScopeSpans`, so it is
+//! charged once per distinct context while at least one buffered span still
+//! references it, and released when the last such span leaves. Without this,
+//! traffic of many small requests (one span per request, each carrying its
+//! own copy of a large resource) would retain far more than `max_bytes`.
+//!
 //! The buffer only enforces structure and accounting. Deciding *what* to do
 //! when a limit is hit (decide early, drop, reject) is the sampler's job.
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
+use std::mem::size_of;
+use std::sync::Arc;
 
 use crate::ids::TraceId;
-use crate::model::SpanRecord;
+use crate::model::{estimate_resource_bytes, estimate_scope_bytes, SpanRecord};
+
+/// Reference count and charged bytes of one shared context.
+#[derive(Debug, Clone, Copy)]
+struct Charge {
+    refs: usize,
+    bytes: usize,
+}
+
+/// Approximate bookkeeping cost of one context map entry (key, value and
+/// the hash table's control byte), added to the context's own estimate.
+const CHARGE_ENTRY_BYTES: usize = size_of::<(usize, Charge)>() + 1;
 
 /// Aggregates maintained incrementally as spans arrive, so policies do not
 /// need to rescan the span list for common questions.
@@ -66,7 +87,8 @@ pub struct TraceEntry {
     pub spans: Vec<SpanRecord>,
     /// Logical time (ms) the first span arrived.
     pub first_seen_ms: u64,
-    /// Sum of span cost estimates.
+    /// Sum of span cost estimates (shared context is accounted buffer-wide,
+    /// not per trace).
     pub bytes: usize,
     /// Incremental aggregates.
     pub stats: TraceStats,
@@ -100,8 +122,23 @@ pub struct TraceBuffer {
     limits: BufferLimits,
     traces: HashMap<TraceId, TraceEntry>,
     order: VecDeque<(u64, TraceId)>,
-    bytes: usize,
+    span_bytes: usize,
     spans: usize,
+    /// Scope contexts referenced by buffered spans, keyed by `Arc` address;
+    /// `refs` counts buffered spans.
+    scopes: HashMap<usize, Charge>,
+    /// Resource contexts referenced by charged scope contexts, keyed by
+    /// `Arc` address; `refs` counts charged scope contexts.
+    resources: HashMap<usize, Charge>,
+    context_bytes: usize,
+}
+
+fn scope_key(rec: &SpanRecord) -> usize {
+    Arc::as_ptr(&rec.ctx) as usize
+}
+
+fn resource_key(rec: &SpanRecord) -> usize {
+    Arc::as_ptr(&rec.ctx.resource) as usize
 }
 
 impl TraceBuffer {
@@ -111,8 +148,11 @@ impl TraceBuffer {
             limits,
             traces: HashMap::new(),
             order: VecDeque::new(),
-            bytes: 0,
+            span_bytes: 0,
             spans: 0,
+            scopes: HashMap::new(),
+            resources: HashMap::new(),
+            context_bytes: 0,
         }
     }
 
@@ -131,9 +171,35 @@ impl TraceBuffer {
         self.traces.is_empty()
     }
 
-    /// Estimated bytes of buffered spans.
+    /// Estimated bytes retained: buffered spans plus every distinct
+    /// resource / scope context they reference.
     pub fn bytes(&self) -> usize {
-        self.bytes
+        self.span_bytes + self.context_bytes
+    }
+
+    /// Estimated bytes of the distinct shared contexts currently charged.
+    pub fn context_bytes(&self) -> usize {
+        self.context_bytes
+    }
+
+    /// Distinct (scope, resource) contexts currently charged.
+    pub fn context_counts(&self) -> (usize, usize) {
+        (self.scopes.len(), self.resources.len())
+    }
+
+    /// Bytes that storing `rec` would add: its own cost plus its scope and
+    /// resource context if no buffered span references them yet.
+    pub fn record_cost(&self, rec: &SpanRecord) -> usize {
+        if self.scopes.contains_key(&scope_key(rec)) {
+            return rec.cost;
+        }
+        let scope = estimate_scope_bytes(&rec.ctx) + CHARGE_ENTRY_BYTES;
+        let resource = if self.resources.contains_key(&resource_key(rec)) {
+            0
+        } else {
+            estimate_resource_bytes(&rec.ctx.resource) + CHARGE_ENTRY_BYTES
+        };
+        rec.cost + scope + resource
     }
 
     /// Number of buffered spans.
@@ -154,18 +220,18 @@ impl TraceBuffer {
     /// Would `cost` more bytes (and possibly one more trace) fit?
     pub fn fits(&self, cost: usize, new_trace: bool) -> bool {
         let traces_ok = !new_trace || self.traces.len() < self.limits.max_traces;
-        traces_ok && self.bytes + cost <= self.limits.max_bytes
+        traces_ok && self.bytes() + cost <= self.limits.max_bytes
     }
 
     /// Fraction of the tighter of the two limits currently in use.
     pub fn utilisation(&self) -> f64 {
         let t = self.traces.len() as f64 / self.limits.max_traces as f64;
-        let b = self.bytes as f64 / self.limits.max_bytes as f64;
+        let b = self.bytes() as f64 / self.limits.max_bytes as f64;
         t.max(b)
     }
 
-    /// Store a span. The caller must have checked [`fits`](Self::fits); this
-    /// method never evicts. Creates the trace entry if needed.
+    /// Store a span. The caller must have checked [`fits`](Self::fits) with
+    /// [`record_cost`](Self::record_cost); this method never evicts. Creates the trace entry if needed.
     pub fn append(&mut self, rec: SpanRecord, now_ms: u64) -> Append {
         let id = rec.trace_id;
         let entry = match self.traces.entry(id) {
@@ -187,8 +253,10 @@ impl TraceBuffer {
         }
         entry.stats.observe(&rec);
         entry.bytes += rec.cost;
-        self.bytes += rec.cost;
+        self.span_bytes += rec.cost;
         self.spans += 1;
+        let added = charge_context(&mut self.scopes, &mut self.resources, &rec);
+        self.context_bytes += added;
         entry.spans.push(rec);
         Append::Stored
     }
@@ -218,18 +286,83 @@ impl TraceBuffer {
 
     fn remove_entry(&mut self, id: &TraceId) -> Option<TraceEntry> {
         let entry = self.traces.remove(id)?;
-        self.bytes -= entry.bytes;
+        self.span_bytes -= entry.bytes;
         self.spans -= entry.spans.len();
+        for rec in &entry.spans {
+            self.context_bytes -= release_context(&mut self.scopes, &mut self.resources, rec);
+        }
         Some(entry)
     }
+}
+
+/// Take a reference on `rec`'s scope (and, for a newly charged scope, its
+/// resource). Returns the bytes newly charged.
+fn charge_context(
+    scopes: &mut HashMap<usize, Charge>,
+    resources: &mut HashMap<usize, Charge>,
+    rec: &SpanRecord,
+) -> usize {
+    match scopes.entry(scope_key(rec)) {
+        Entry::Occupied(mut o) => {
+            o.get_mut().refs += 1;
+            0
+        }
+        Entry::Vacant(v) => {
+            let scope = estimate_scope_bytes(&rec.ctx) + CHARGE_ENTRY_BYTES;
+            v.insert(Charge {
+                refs: 1,
+                bytes: scope,
+            });
+            let resource = match resources.entry(resource_key(rec)) {
+                Entry::Occupied(mut o) => {
+                    o.get_mut().refs += 1;
+                    0
+                }
+                Entry::Vacant(v) => {
+                    let bytes = estimate_resource_bytes(&rec.ctx.resource) + CHARGE_ENTRY_BYTES;
+                    v.insert(Charge { refs: 1, bytes });
+                    bytes
+                }
+            };
+            scope + resource
+        }
+    }
+}
+
+/// Drop a reference taken by [`charge_context`]. Returns the bytes released.
+/// Keys stay valid while charged: a charged context is kept alive by the
+/// buffered span holding the reference, so its address cannot be reused.
+fn release_context(
+    scopes: &mut HashMap<usize, Charge>,
+    resources: &mut HashMap<usize, Charge>,
+    rec: &SpanRecord,
+) -> usize {
+    let Entry::Occupied(mut scope) = scopes.entry(scope_key(rec)) else {
+        debug_assert!(false, "released a scope context that was never charged");
+        return 0;
+    };
+    scope.get_mut().refs -= 1;
+    if scope.get().refs > 0 {
+        return 0;
+    }
+    let mut released = scope.remove().bytes;
+    if let Entry::Occupied(mut res) = resources.entry(resource_key(rec)) {
+        res.get_mut().refs -= 1;
+        if res.get().refs == 0 {
+            released += res.remove().bytes;
+        }
+    } else {
+        debug_assert!(false, "released a resource context that was never charged");
+    }
+    released
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ScopeContext, SpanRecord};
+    use crate::model::{kv_str, ResourceContext, ScopeContext, SpanRecord};
+    use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{Span, Status};
-    use std::sync::Arc;
 
     fn limits() -> BufferLimits {
         BufferLimits {
@@ -278,8 +411,88 @@ mod tests {
         assert_eq!(e.stats.truncated_spans, 1);
         assert_eq!(e.first_seen_ms, 0);
         assert_eq!(b.span_count(), 2);
-        assert_eq!(b.bytes(), e.bytes);
+        // each test record carries its own scope + resource context
+        assert_eq!(b.context_counts(), (2, 2));
+        assert!(b.context_bytes() > 0);
+        assert_eq!(b.bytes(), e.bytes + b.context_bytes());
         assert_eq!(b.len(), 1);
+    }
+
+    fn rec_in(trace: u8, ctx: &Arc<ScopeContext>) -> SpanRecord {
+        let span = Span {
+            trace_id: vec![trace; 16],
+            span_id: vec![1; 8],
+            ..Default::default()
+        };
+        SpanRecord::new(TraceId([trace; 16]), span, Arc::clone(ctx))
+    }
+
+    fn resource_ctx(attr_bytes: usize) -> Arc<ResourceContext> {
+        Arc::new(ResourceContext {
+            resource: Some(Resource {
+                attributes: vec![kv_str("k8s.pod.labels", "x".repeat(attr_bytes))],
+                ..Default::default()
+            }),
+            schema_url: String::new(),
+        })
+    }
+
+    #[test]
+    fn shared_context_is_charged_once_and_released_with_last_span() {
+        let mut b = TraceBuffer::new(BufferLimits {
+            max_traces: 10,
+            max_spans_per_trace: 10,
+            ..limits()
+        });
+        let res = resource_ctx(4_096);
+        let scope_a = Arc::new(ScopeContext {
+            resource: Arc::clone(&res),
+            ..Default::default()
+        });
+        let scope_b = Arc::new(ScopeContext {
+            resource: Arc::clone(&res),
+            ..Default::default()
+        });
+        let first = rec_in(1, &scope_a);
+        let full = b.record_cost(&first);
+        assert!(full > first.cost + 4_096, "context not charged: {full}");
+        b.append(first, 0);
+        assert_eq!(b.bytes(), full);
+        // same scope again: only the span's own bytes
+        let again = rec_in(2, &scope_a);
+        assert_eq!(b.record_cost(&again), again.cost);
+        b.append(again, 1);
+        // new scope over the same resource: scope charged, resource not
+        let other = rec_in(3, &scope_b);
+        let other_cost = b.record_cost(&other);
+        assert!(other_cost > other.cost && other_cost < other.cost + 4_096);
+        b.append(other, 2);
+        assert_eq!(b.context_counts(), (2, 1));
+        let charged = b.context_bytes();
+        // evicting trace 1 keeps the context alive for trace 2
+        b.pop_oldest().unwrap();
+        assert_eq!(b.context_counts(), (2, 1));
+        // evicting trace 2 releases scope_a; trace 3 still pins the resource
+        b.pop_oldest().unwrap();
+        assert_eq!(b.context_counts(), (1, 1));
+        assert!(b.context_bytes() < charged);
+        b.pop_oldest().unwrap();
+        assert_eq!(b.context_counts(), (0, 0));
+        assert_eq!(b.context_bytes(), 0);
+        assert_eq!(b.bytes(), 0);
+    }
+
+    #[test]
+    fn truncated_span_does_not_charge_context() {
+        let mut b = TraceBuffer::new(limits());
+        let ctx = Arc::new(ScopeContext::default());
+        b.append(rec_in(1, &ctx), 0);
+        b.append(rec_in(1, &ctx), 0);
+        let before = b.bytes();
+        let fresh = rec(1, 0, 0, false);
+        assert_eq!(b.append(fresh, 0), Append::TraceFull);
+        assert_eq!(b.bytes(), before);
+        assert_eq!(b.context_counts(), (1, 1));
     }
 
     #[test]

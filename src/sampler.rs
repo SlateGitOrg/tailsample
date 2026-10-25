@@ -91,8 +91,10 @@ pub struct SamplerGauges {
     pub traces: usize,
     /// Buffered spans.
     pub spans: usize,
-    /// Estimated buffered bytes.
+    /// Estimated buffered bytes (spans plus shared context).
     pub bytes: usize,
+    /// Part of `bytes` charged for distinct resource / scope contexts.
+    pub context_bytes: usize,
     /// Decision cache entries (sampled, not sampled).
     pub cache_sizes: (usize, usize),
     /// Whether new traces are admitted.
@@ -145,6 +147,7 @@ impl Sampler {
             traces: self.buffer.len(),
             spans: self.buffer.span_count(),
             bytes: self.buffer.bytes(),
+            context_bytes: self.buffer.context_bytes(),
             cache_sizes: self.cache.sizes(),
             admission_open: self.admission_open,
         }
@@ -180,7 +183,8 @@ impl Sampler {
 
     fn ingest_one(&mut self, rec: SpanRecord, now_ms: u64, out: &mut Vec<Released>) {
         let limits = self.buffer.limits();
-        if rec.cost > limits.max_bytes {
+        // Own cost plus any shared context not yet charged to the buffer.
+        if self.buffer.record_cost(&rec) > limits.max_bytes {
             self.stats.spans_rejected_oversize += 1;
             return;
         }
@@ -195,7 +199,7 @@ impl Sampler {
                 self.stats.spans_dropped_trace_limit += 1;
                 return;
             }
-            if !self.make_room(rec.cost, false, now_ms, out) {
+            if !self.make_room(&rec, false, now_ms, out) {
                 self.stats.spans_rejected_full += 1;
                 return;
             }
@@ -218,7 +222,7 @@ impl Sampler {
             }
             Some(Decision::NotSampled) => self.stats.spans_late_dropped += 1,
             None => {
-                if !self.make_room(rec.cost, true, now_ms, out) {
+                if !self.make_room(&rec, true, now_ms, out) {
                     self.stats.spans_rejected_full += 1;
                     return;
                 }
@@ -235,17 +239,19 @@ impl Sampler {
         }
     }
 
-    /// Ensure `cost` bytes (and a new trace slot if `new_trace`) fit,
-    /// evicting according to policy. Returns false when the span must be
-    /// rejected instead.
+    /// Ensure `rec` (its own bytes plus any shared context not yet charged,
+    /// and a new trace slot if `new_trace`) fits, evicting according to
+    /// policy. The cost is recomputed after each eviction because evicting a
+    /// trace can release the very context `rec` shares. Returns false when
+    /// the span must be rejected instead.
     fn make_room(
         &mut self,
-        cost: usize,
+        rec: &SpanRecord,
         new_trace: bool,
         now_ms: u64,
         out: &mut Vec<Released>,
     ) -> bool {
-        while !self.buffer.fits(cost, new_trace) {
+        while !self.buffer.fits(self.buffer.record_cost(rec), new_trace) {
             if self.eviction == EvictionPolicy::RejectNew {
                 if self.admission_open {
                     self.admission_open = false;
@@ -379,7 +385,12 @@ mod tests {
             }),
             ..Default::default()
         };
-        SpanRecord::new(id, s, Arc::new(ScopeContext::default()))
+        // One shared context per test thread, as if every span arrived in
+        // the same batch; shared-context charging is tested separately.
+        thread_local! {
+            static CTX: Arc<ScopeContext> = Arc::new(ScopeContext::default());
+        }
+        CTX.with(|ctx| SpanRecord::new(id, s, Arc::clone(ctx)))
     }
 
     fn sampler(extra: &str) -> Sampler {
@@ -535,10 +546,19 @@ mod tests {
 
     #[test]
     fn byte_pressure_on_existing_trace_can_evict_itself() {
-        let one = rec(1, 1, false, 0).cost;
+        let probe = rec(1, 1, false, 0);
+        let one = probe.cost;
+        let ctx = TraceBuffer::new(BufferLimits {
+            max_traces: 1,
+            max_bytes: 1,
+            max_spans_per_trace: 1,
+            decision_wait_ms: 1,
+        })
+        .record_cost(&probe)
+            - one;
         let cfg = Config::from_toml_str(&format!(
             "[buffer]\nmax_bytes = {}\nmax_traces = 10\ndecision_wait_ms = 10\n[[policies]]\nname=\"a\"\ntype=\"always_sample\"",
-            one * 2 + one / 2
+            ctx + one * 2 + one / 2
         ))
         .unwrap();
         let mut s = Sampler::new(&cfg).unwrap();
