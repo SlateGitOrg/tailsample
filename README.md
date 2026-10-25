@@ -1,5 +1,7 @@
 # tailsample
 
+[![CI](https://github.com/SlateGitOrg/tailsample/actions/workflows/ci.yml/badge.svg)](https://github.com/SlateGitOrg/tailsample/actions/workflows/ci.yml)
+
 A tail-based trace sampler written in Rust. It receives spans over OTLP/gRPC
 and OTLP/HTTP, groups them into traces in a bounded in-memory buffer, waits
 for each trace to finish arriving, decides with an ordered set of policies
@@ -11,14 +13,18 @@ limits with a configurable eviction policy, and when a downstream is slow
 the receivers refuse data with retryable OTLP errors instead of buffering
 without limit.
 
-**Who it is for:** people who run tracing pipelines and want to see how a
-tail sampler behaves under load, with the internals in one small codebase:
-what gets dropped when memory runs out, how budgets cap an error storm, and
-where backpressure shows up. It is a portfolio project, not a drop-in
-replacement for the OpenTelemetry Collector's `tail_sampling` processor
-(see [Limitations](#limitations)).
+## Why
 
-## What is in the box
+Head-based sampling decides before a trace exists, so it cannot keep "every
+error" or "every slow request". Tail sampling decides after the trace has
+arrived, at the price of buffering. tailsample keeps that machinery in one
+small codebase so its behavior under load is easy to inspect: what gets
+dropped when memory runs out, how budgets cap an error storm, and where
+backpressure shows up. It is not a drop-in replacement for the
+OpenTelemetry Collector's `tail_sampling` processor (see
+[Limitations](#limitations)).
+
+## Features
 
 | | |
 |---|---|
@@ -73,7 +79,7 @@ shutdown in detail.
 | `telemetry` | counters and a Prometheus renderer |
 | `loadgen`, `sim`, `sink`, `demo` | traffic generation, offline simulation, debug sink, loopback demo |
 
-## Quickstart
+## Quick start
 
 Requires a Rust toolchain (1.85+). `make check` also needs
 [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov).
@@ -368,8 +374,6 @@ The full list, with the cost of each if it is wrong, is in
   the bundled generator; real fan-out and payload sizes differ.
 - **Config is TOML**, not the Collector's YAML; files are not copy-paste
   compatible. Composite nesting is limited to depth 2.
-- **CI has not run.** `.github/workflows/ci.yml` mirrors `make check`,
-  `make demo` and `make bench-quick`, but the repository has not been pushed.
 
 ## Roadmap
 
@@ -382,4 +386,4 @@ The full list, with the cost of each if it is wrong, is in
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
