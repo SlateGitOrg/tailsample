@@ -60,9 +60,9 @@ impl TraceService for SinkService {
                 .and_then(|r| r.attributes.iter().find(|kv| kv.key == "service.name"))
                 .and_then(|kv| kv.value.as_ref())
                 .and_then(|v| match &v.value {
-                    Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => {
-                        Some(s.clone())
-                    }
+                    Some(
+                        opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s),
+                    ) => Some(s.clone()),
                     _ => None,
                 })
                 .unwrap_or_else(|| "unknown".into());

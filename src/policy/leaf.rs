@@ -174,11 +174,19 @@ mod tests {
     fn latency_bounds() {
         let mut p = LatencyPolicy::new(l("lat"), 100, Some(200));
         assert_eq!(p.name(), "lat");
-        assert!(p.evaluate(&trace(1, "s", &[(150, 0, vec![])]).view(), 0).is_some());
-        assert!(p.evaluate(&trace(1, "s", &[(99, 0, vec![])]).view(), 0).is_none());
-        assert!(p.evaluate(&trace(1, "s", &[(201, 0, vec![])]).view(), 0).is_none());
+        assert!(p
+            .evaluate(&trace(1, "s", &[(150, 0, vec![])]).view(), 0)
+            .is_some());
+        assert!(p
+            .evaluate(&trace(1, "s", &[(99, 0, vec![])]).view(), 0)
+            .is_none());
+        assert!(p
+            .evaluate(&trace(1, "s", &[(201, 0, vec![])]).view(), 0)
+            .is_none());
         let mut open = LatencyPolicy::new(l("lat"), 100, None);
-        assert!(open.evaluate(&trace(1, "s", &[(10_000, 0, vec![])]).view(), 0).is_some());
+        assert!(open
+            .evaluate(&trace(1, "s", &[(10_000, 0, vec![])]).view(), 0)
+            .is_some());
     }
 
     #[test]
@@ -188,10 +196,16 @@ mod tests {
         assert!(err
             .evaluate(&trace(1, "s", &[(1, 0, vec![]), (1, 2, vec![])]).view(), 0)
             .is_some());
-        assert!(err.evaluate(&trace(1, "s", &[(1, 1, vec![])]).view(), 0).is_none());
+        assert!(err
+            .evaluate(&trace(1, "s", &[(1, 1, vec![])]).view(), 0)
+            .is_none());
         let mut ok = StatusCodePolicy::new(l("o"), &[StatusCodeName::Ok, StatusCodeName::Unset]);
-        assert!(ok.evaluate(&trace(1, "s", &[(1, 1, vec![])]).view(), 0).is_some());
-        assert!(ok.evaluate(&trace(1, "s", &[(1, 2, vec![])]).view(), 0).is_none());
+        assert!(ok
+            .evaluate(&trace(1, "s", &[(1, 1, vec![])]).view(), 0)
+            .is_some());
+        assert!(ok
+            .evaluate(&trace(1, "s", &[(1, 2, vec![])]).view(), 0)
+            .is_none());
     }
 
     #[test]
@@ -212,7 +226,11 @@ mod tests {
         assert_eq!(p.name(), "p");
         let hits = (1..=20_000u128)
             .filter(|i| {
-                let t = trace(i.wrapping_mul(0x9e37_79b9_7f4a_7c15), "s", &[(1, 0, vec![])]);
+                let t = trace(
+                    i.wrapping_mul(0x9e37_79b9_7f4a_7c15),
+                    "s",
+                    &[(1, 0, vec![])],
+                );
                 p.evaluate(&t.view(), 0).is_some()
             })
             .count();

@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::header::{CONTENT_TYPE, HeaderValue};
+use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::{Method, Request, StatusCode, Uri};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
@@ -23,9 +23,9 @@ pub struct HttpExporter {
 impl HttpExporter {
     /// Validate the endpoint and build a pooled client.
     pub fn new(endpoint: &str) -> Result<Self, ExportError> {
-        let uri: Uri = endpoint
-            .parse()
-            .map_err(|e| ExportError::permanent(format!("invalid HTTP endpoint {endpoint:?}: {e}")))?;
+        let uri: Uri = endpoint.parse().map_err(|e| {
+            ExportError::permanent(format!("invalid HTTP endpoint {endpoint:?}: {e}"))
+        })?;
         if uri.scheme_str() != Some("http") || uri.host().is_none() {
             return Err(ExportError::permanent(format!(
                 "HTTP endpoint must be an absolute http:// URL, got {endpoint:?}"
@@ -50,7 +50,10 @@ impl Exporter for HttpExporter {
         let request = Request::builder()
             .method(Method::POST)
             .uri(self.uri.clone())
-            .header(CONTENT_TYPE, HeaderValue::from_static("application/x-protobuf"))
+            .header(
+                CONTENT_TYPE,
+                HeaderValue::from_static("application/x-protobuf"),
+            )
             .body(body)
             .map_err(|e| ExportError::permanent(format!("building request: {e}")))?;
         let resp = self
@@ -88,7 +91,10 @@ mod tests {
     #[tokio::test]
     async fn unreachable_endpoint_is_retryable() {
         let e = HttpExporter::new("http://127.0.0.1:9/v1/traces").unwrap();
-        let err = e.export(ExportTraceServiceRequest::default()).await.unwrap_err();
+        let err = e
+            .export(ExportTraceServiceRequest::default())
+            .await
+            .unwrap_err();
         assert!(err.retryable, "{err}");
     }
 }

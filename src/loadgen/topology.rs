@@ -146,26 +146,125 @@ const fn http(
 
 /// Operation table. Indices are referenced by [`Call::op`] and [`ENTRY_POINTS`].
 pub const OPS: &[Op] = &[
-    /* 0 */ http("GET", "/product/{id}", "GET /product/{id}", 6.0, &[c(4, 1.0, 1, 1), c(6, 0.8, 1, 1), c(7, 0.9, 1, 1)]),
-    /* 1 */ http("GET", "/cart", "GET /cart", 4.0, &[c(2, 1.0, 1, 1), c(4, 1.0, 1, 4), c(7, 0.5, 1, 1)]),
-    /* 2 */ rpc(1, "CartService", "GetCart", "CartService/GetCart", 1.5, &[c(9, 1.0, 1, 1)]),
-    /* 3 */ http("POST", "/checkout", "POST /checkout", 8.0, &[c(5, 1.0, 1, 1)]),
-    /* 4 */ rpc(2, "ProductCatalogService", "GetProduct", "ProductCatalogService/GetProduct", 2.0, &[c(10, 0.7, 1, 1)]),
-    /* 5 */ rpc(3, "CheckoutService", "PlaceOrder", "CheckoutService/PlaceOrder", 12.0, &[
-        c(2, 1.0, 1, 1), c(4, 1.0, 1, 3), c(7, 1.0, 1, 1), c(8, 1.0, 1, 1),
-        c(11, 1.0, 1, 1), c(12, 0.9, 1, 1), c(13, 1.0, 1, 1),
-    ]),
-    /* 6 */ rpc(8, "RecommendationService", "ListRecommendations", "RecommendationService/ListRecommendations", 9.0, &[c(4, 1.0, 1, 2)]),
-    /* 7 */ rpc(6, "CurrencyService", "Convert", "CurrencyService/Convert", 0.8, &[]),
-    /* 8 */ rpc(4, "PaymentService", "Charge", "PaymentService/Charge", 30.0, &[c(14, 1.0, 1, 1)]),
+    /* 0 */
+    http(
+        "GET",
+        "/product/{id}",
+        "GET /product/{id}",
+        6.0,
+        &[c(4, 1.0, 1, 1), c(6, 0.8, 1, 1), c(7, 0.9, 1, 1)],
+    ),
+    /* 1 */
+    http(
+        "GET",
+        "/cart",
+        "GET /cart",
+        4.0,
+        &[c(2, 1.0, 1, 1), c(4, 1.0, 1, 4), c(7, 0.5, 1, 1)],
+    ),
+    /* 2 */
+    rpc(
+        1,
+        "CartService",
+        "GetCart",
+        "CartService/GetCart",
+        1.5,
+        &[c(9, 1.0, 1, 1)],
+    ),
+    /* 3 */
+    http(
+        "POST",
+        "/checkout",
+        "POST /checkout",
+        8.0,
+        &[c(5, 1.0, 1, 1)],
+    ),
+    /* 4 */
+    rpc(
+        2,
+        "ProductCatalogService",
+        "GetProduct",
+        "ProductCatalogService/GetProduct",
+        2.0,
+        &[c(10, 0.7, 1, 1)],
+    ),
+    /* 5 */
+    rpc(
+        3,
+        "CheckoutService",
+        "PlaceOrder",
+        "CheckoutService/PlaceOrder",
+        12.0,
+        &[
+            c(2, 1.0, 1, 1),
+            c(4, 1.0, 1, 3),
+            c(7, 1.0, 1, 1),
+            c(8, 1.0, 1, 1),
+            c(11, 1.0, 1, 1),
+            c(12, 0.9, 1, 1),
+            c(13, 1.0, 1, 1),
+        ],
+    ),
+    /* 6 */
+    rpc(
+        8,
+        "RecommendationService",
+        "ListRecommendations",
+        "RecommendationService/ListRecommendations",
+        9.0,
+        &[c(4, 1.0, 1, 2)],
+    ),
+    /* 7 */
+    rpc(
+        6,
+        "CurrencyService",
+        "Convert",
+        "CurrencyService/Convert",
+        0.8,
+        &[],
+    ),
+    /* 8 */
+    rpc(
+        4,
+        "PaymentService",
+        "Charge",
+        "PaymentService/Charge",
+        30.0,
+        &[c(14, 1.0, 1, 1)],
+    ),
     /* 9 */ db(1, "redis", "HGETALL", 0.4),
     /* 10 */ db(2, "postgresql", "SELECT products", 1.5),
-    /* 11 */ rpc(5, "ShippingService", "ShipOrder", "ShippingService/ShipOrder", 6.0, &[]),
-    /* 12 */ rpc(7, "EmailService", "SendOrderConfirmation", "EmailService/SendOrderConfirmation", 15.0, &[]),
-    /* 13 */ rpc(1, "CartService", "EmptyCart", "CartService/EmptyCart", 1.5, &[c(9, 1.0, 1, 1)]),
+    /* 11 */
+    rpc(
+        5,
+        "ShippingService",
+        "ShipOrder",
+        "ShippingService/ShipOrder",
+        6.0,
+        &[],
+    ),
+    /* 12 */
+    rpc(
+        7,
+        "EmailService",
+        "SendOrderConfirmation",
+        "EmailService/SendOrderConfirmation",
+        15.0,
+        &[],
+    ),
+    /* 13 */
+    rpc(
+        1,
+        "CartService",
+        "EmptyCart",
+        "CartService/EmptyCart",
+        1.5,
+        &[c(9, 1.0, 1, 1)],
+    ),
     /* 14 */ db(4, "postgresql", "INSERT payments", 3.0),
     /* 15 */ http("GET", "/healthz", "GET /healthz", 0.2, &[]),
-    /* 16 */ Op {
+    /* 16 */
+    Op {
         service: 3,
         name: "validate cart",
         kind: Kind::Internal,

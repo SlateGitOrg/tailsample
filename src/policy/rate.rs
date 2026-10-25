@@ -70,7 +70,7 @@ mod tests {
         assert!(p.evaluate(&t.view(), 0).is_none()); // 2 tokens left
         assert!(p.evaluate(&t.view(), 199).is_none()); // ~3.99 tokens
         assert!(p.evaluate(&t.view(), 200).is_some()); // 4 tokens
-        // A clock going backwards never refills.
+                                                       // A clock going backwards never refills.
         assert!(p.evaluate(&t.view(), 100).is_none());
         // Refill is capped at burst.
         assert!(p.evaluate(&t.view(), 100_000).is_some());

@@ -16,8 +16,9 @@ pub struct GrpcExporter {
 impl GrpcExporter {
     /// `endpoint` like `http://127.0.0.1:4317`. Connection happens on first use.
     pub fn new(endpoint: &str) -> Result<Self, ExportError> {
-        let ep = Endpoint::from_shared(endpoint.to_string())
-            .map_err(|e| ExportError::permanent(format!("invalid gRPC endpoint {endpoint:?}: {e}")))?;
+        let ep = Endpoint::from_shared(endpoint.to_string()).map_err(|e| {
+            ExportError::permanent(format!("invalid gRPC endpoint {endpoint:?}: {e}"))
+        })?;
         Ok(GrpcExporter {
             client: TraceServiceClient::new(ep.connect_lazy()),
         })
@@ -52,7 +53,11 @@ impl Exporter for GrpcExporter {
                 Ok(())
             }
             Err(status) => {
-                let msg = format!("gRPC export failed: {:?}: {}", status.code(), status.message());
+                let msg = format!(
+                    "gRPC export failed: {:?}: {}",
+                    status.code(),
+                    status.message()
+                );
                 if retryable_code(status.code()) {
                     Err(ExportError::retryable(msg))
                 } else {
@@ -79,7 +84,10 @@ mod tests {
     async fn unreachable_endpoint_is_retryable() {
         // Port 9 (discard) on loopback is closed on CI and dev machines.
         let e = GrpcExporter::new("http://127.0.0.1:9").unwrap();
-        let err = e.export(ExportTraceServiceRequest::default()).await.unwrap_err();
+        let err = e
+            .export(ExportTraceServiceRequest::default())
+            .await
+            .unwrap_err();
         assert!(err.retryable, "{err}");
     }
 }

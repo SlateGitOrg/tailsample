@@ -90,19 +90,66 @@ impl Telemetry {
     pub fn render_prometheus(&self) -> String {
         let mut out = String::new();
         let mut counter = |name: &str, help: &str, v: u64| {
-            let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} counter\n{name} {v}");
+            let _ = writeln!(
+                out,
+                "# HELP {name} {help}\n# TYPE {name} counter\n{name} {v}"
+            );
         };
-        counter("tailsample_receiver_requests_grpc_total", "OTLP/gRPC export requests.", self.grpc_requests.get());
-        counter("tailsample_receiver_requests_http_total", "OTLP/HTTP export requests.", self.http_requests.get());
-        counter("tailsample_receiver_rejected_queue_full_total", "Requests refused: ingest queue full.", self.rejected_queue_full.get());
-        counter("tailsample_receiver_rejected_admission_total", "Requests refused: buffer admission closed.", self.rejected_admission.get());
-        counter("tailsample_receiver_rejected_shutdown_total", "Requests refused during shutdown.", self.rejected_shutdown.get());
-        counter("tailsample_receiver_rejected_malformed_total", "Requests that failed to decode.", self.rejected_malformed.get());
-        counter("tailsample_receiver_spans_enqueued_total", "Spans accepted into the ingest queue.", self.spans_enqueued.get());
-        counter("tailsample_exporter_requests_ok_total", "Successful export requests.", self.export_requests_ok.get());
-        counter("tailsample_exporter_spans_ok_total", "Spans exported.", self.export_spans_ok.get());
-        counter("tailsample_exporter_attempt_failures_total", "Failed export attempts.", self.export_attempt_failures.get());
-        counter("tailsample_exporter_spans_dropped_total", "Spans dropped by the exporter.", self.export_spans_dropped.get());
+        counter(
+            "tailsample_receiver_requests_grpc_total",
+            "OTLP/gRPC export requests.",
+            self.grpc_requests.get(),
+        );
+        counter(
+            "tailsample_receiver_requests_http_total",
+            "OTLP/HTTP export requests.",
+            self.http_requests.get(),
+        );
+        counter(
+            "tailsample_receiver_rejected_queue_full_total",
+            "Requests refused: ingest queue full.",
+            self.rejected_queue_full.get(),
+        );
+        counter(
+            "tailsample_receiver_rejected_admission_total",
+            "Requests refused: buffer admission closed.",
+            self.rejected_admission.get(),
+        );
+        counter(
+            "tailsample_receiver_rejected_shutdown_total",
+            "Requests refused during shutdown.",
+            self.rejected_shutdown.get(),
+        );
+        counter(
+            "tailsample_receiver_rejected_malformed_total",
+            "Requests that failed to decode.",
+            self.rejected_malformed.get(),
+        );
+        counter(
+            "tailsample_receiver_spans_enqueued_total",
+            "Spans accepted into the ingest queue.",
+            self.spans_enqueued.get(),
+        );
+        counter(
+            "tailsample_exporter_requests_ok_total",
+            "Successful export requests.",
+            self.export_requests_ok.get(),
+        );
+        counter(
+            "tailsample_exporter_spans_ok_total",
+            "Spans exported.",
+            self.export_spans_ok.get(),
+        );
+        counter(
+            "tailsample_exporter_attempt_failures_total",
+            "Failed export attempts.",
+            self.export_attempt_failures.get(),
+        );
+        counter(
+            "tailsample_exporter_spans_dropped_total",
+            "Spans dropped by the exporter.",
+            self.export_spans_dropped.get(),
+        );
 
         let core = self.core();
         let s = &core.stats;
@@ -145,12 +192,32 @@ impl Telemetry {
         let mut gauge = |name: &str, help: &str, v: f64| {
             let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {v}");
         };
-        gauge("tailsample_buffer_traces", "Buffered traces.", g.traces as f64);
+        gauge(
+            "tailsample_buffer_traces",
+            "Buffered traces.",
+            g.traces as f64,
+        );
         gauge("tailsample_buffer_spans", "Buffered spans.", g.spans as f64);
-        gauge("tailsample_buffer_bytes", "Estimated buffered bytes.", g.bytes as f64);
-        gauge("tailsample_decision_cache_sampled", "Cached sampled decisions.", g.cache_sizes.0 as f64);
-        gauge("tailsample_decision_cache_not_sampled", "Cached not-sampled decisions.", g.cache_sizes.1 as f64);
-        gauge("tailsample_admission_open", "1 when new traces are admitted.", if g.admission_open { 1.0 } else { 0.0 });
+        gauge(
+            "tailsample_buffer_bytes",
+            "Estimated buffered bytes.",
+            g.bytes as f64,
+        );
+        gauge(
+            "tailsample_decision_cache_sampled",
+            "Cached sampled decisions.",
+            g.cache_sizes.0 as f64,
+        );
+        gauge(
+            "tailsample_decision_cache_not_sampled",
+            "Cached not-sampled decisions.",
+            g.cache_sizes.1 as f64,
+        );
+        gauge(
+            "tailsample_admission_open",
+            "1 when new traces are admitted.",
+            if g.admission_open { 1.0 } else { 0.0 },
+        );
         gauge(
             "tailsample_ingest_queue_high_water",
             "Maximum ingest queue depth observed.",
@@ -173,7 +240,9 @@ mod tests {
         t.observe_queue_depth(1);
         let mut snap = CoreSnapshot::default();
         snap.stats.spans_received = 9;
-        snap.stats.sampled_by_policy.insert("budget/\"err\"".into(), 2);
+        snap.stats
+            .sampled_by_policy
+            .insert("budget/\"err\"".into(), 2);
         snap.gauges.admission_open = true;
         t.publish(snap);
         let text = t.render_prometheus();

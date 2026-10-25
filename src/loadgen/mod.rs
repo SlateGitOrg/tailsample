@@ -302,7 +302,8 @@ mod tests {
 
     #[test]
     fn schedule_delivers_every_span_in_order() {
-        let mut s = Schedule::new(GenConfig::default(), 200, 100.0, true).with_max_spans_per_request(16);
+        let mut s =
+            Schedule::new(GenConfig::default(), 200, 100.0, true).with_max_spans_per_request(16);
         let mut t = 0;
         let mut spans = 0;
         let mut last_now = 0;
@@ -319,7 +320,10 @@ mod tests {
         assert_eq!(truth.len(), 200);
         assert_eq!(s.generated(), 200);
         assert_eq!(spans, truth.values().map(|t| t.spans).sum::<usize>());
-        assert!(last_now >= 2_000, "rate of 100/s spreads 200 traces over 2s");
+        assert!(
+            last_now >= 2_000,
+            "rate of 100/s spreads 200 traces over 2s"
+        );
         assert!(s.next_event_ms().is_none());
     }
 

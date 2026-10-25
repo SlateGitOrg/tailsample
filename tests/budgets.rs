@@ -75,7 +75,11 @@ fn every_error_trace_is_kept_while_within_budget() {
             r.errors.complete, r.errors.generated,
             "late spans of kept error traces must be forwarded: {r}"
         );
-        let peak = r.max_window_spans.get("budget/errors").copied().unwrap_or(0);
+        let peak = r
+            .max_window_spans
+            .get("budget/errors")
+            .copied()
+            .unwrap_or(0);
         assert!(peak <= ERROR_BUDGET, "error budget exceeded: {peak}");
     }
 }
@@ -84,7 +88,11 @@ fn every_error_trace_is_kept_while_within_budget() {
 fn error_budget_is_a_hard_cap_during_an_error_storm() {
     // 60% of traces fail: error spans far exceed the 1200/s budget.
     let r = run(&budget_config(""), 12_000, 400.0, gen(9, 0.6));
-    let peak = r.max_window_spans.get("budget/errors").copied().unwrap_or(0);
+    let peak = r
+        .max_window_spans
+        .get("budget/errors")
+        .copied()
+        .unwrap_or(0);
     assert!(peak <= ERROR_BUDGET, "error budget exceeded: {peak}\n{r}");
     assert!(r.errors.kept < r.errors.generated, "{r}");
     // Budget is actually used, not starved: at least 70% of the error
@@ -185,7 +193,10 @@ fn top_level_rate_limit_caps_throughput() {
     assert!(peak <= 1_000, "{peak}");
     let seconds = r.sim_ms as f64 / 1_000.0;
     let mean = r.total().spans_kept as f64 / seconds;
-    assert!(mean <= 500.0 * 1.15, "mean {mean:.0} spans/s over {seconds:.1}s");
+    assert!(
+        mean <= 500.0 * 1.15,
+        "mean {mean:.0} spans/s over {seconds:.1}s"
+    );
 }
 
 #[test]
@@ -197,4 +208,3 @@ fn simulation_is_deterministic() {
     assert_eq!(a.errors, b.errors);
     assert_eq!(a.max_window_spans, b.max_window_spans);
 }
-

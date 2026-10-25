@@ -413,7 +413,11 @@ mod tests {
     fn decides_after_wait_and_handles_late_spans() {
         let mut s = sampler("");
         let mut out = Vec::new();
-        s.ingest(vec![rec(1, 1, false, 0), rec(1, 2, true, 0), rec(2, 1, false, 0)], 0, &mut out);
+        s.ingest(
+            vec![rec(1, 1, false, 0), rec(1, 2, true, 0), rec(2, 1, false, 0)],
+            0,
+            &mut out,
+        );
         assert!(out.is_empty());
         s.tick(999, &mut out);
         assert!(out.is_empty());
@@ -425,7 +429,11 @@ mod tests {
         assert_eq!(out[0].kind, ReleaseKind::Decided);
         out.clear();
         // late spans follow the cached decision
-        s.ingest(vec![rec(1, 3, false, 0), rec(2, 2, false, 0)], 1_500, &mut out);
+        s.ingest(
+            vec![rec(1, 3, false, 0), rec(2, 2, false, 0)],
+            1_500,
+            &mut out,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].kind, ReleaseKind::Late);
         assert_eq!(s.stats().spans_late_sampled, 1);
@@ -438,7 +446,11 @@ mod tests {
     fn decide_early_eviction_keeps_errors() {
         let mut s = sampler("");
         let mut out = Vec::new();
-        s.ingest(vec![rec(1, 1, true, 0), rec(2, 1, false, 0), rec(3, 1, false, 0)], 0, &mut out);
+        s.ingest(
+            vec![rec(1, 1, true, 0), rec(2, 1, false, 0), rec(3, 1, false, 0)],
+            0,
+            &mut out,
+        );
         assert!(out.is_empty());
         s.ingest(vec![rec(4, 1, false, 0)], 10, &mut out);
         assert_eq!(out.len(), 1);
@@ -452,7 +464,11 @@ mod tests {
     fn drop_oldest_eviction_drops_and_caches() {
         let mut s = sampler("eviction = \"drop_oldest\"");
         let mut out = Vec::new();
-        s.ingest(vec![rec(1, 1, true, 0), rec(2, 1, false, 0), rec(3, 1, false, 0)], 0, &mut out);
+        s.ingest(
+            vec![rec(1, 1, true, 0), rec(2, 1, false, 0), rec(3, 1, false, 0)],
+            0,
+            &mut out,
+        );
         s.ingest(vec![rec(4, 1, false, 0), rec(1, 2, true, 0)], 10, &mut out);
         assert!(out.is_empty());
         assert_eq!(s.stats().traces_evicted, 1);
@@ -467,7 +483,12 @@ mod tests {
         let mut s = sampler("eviction = \"reject_new\"\nadmission_resume_ratio = 0.5");
         let mut out = Vec::new();
         s.ingest(
-            vec![rec(1, 1, false, 0), rec(2, 1, false, 0), rec(3, 1, false, 0), rec(4, 1, false, 0)],
+            vec![
+                rec(1, 1, false, 0),
+                rec(2, 1, false, 0),
+                rec(3, 1, false, 0),
+                rec(4, 1, false, 0),
+            ],
             0,
             &mut out,
         );
@@ -491,7 +512,12 @@ mod tests {
         let mut s = Sampler::new(&cfg).unwrap();
         let mut out = Vec::new();
         s.ingest(
-            vec![rec(1, 1, false, 0), rec(1, 2, false, 0), rec(1, 3, false, 0), rec(2, 1, false, 5_000)],
+            vec![
+                rec(1, 1, false, 0),
+                rec(1, 2, false, 0),
+                rec(1, 3, false, 0),
+                rec(2, 1, false, 5_000),
+            ],
             0,
             &mut out,
         );

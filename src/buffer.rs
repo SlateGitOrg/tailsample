@@ -252,15 +252,25 @@ mod tests {
             }),
             ..Default::default()
         };
-        SpanRecord::new(TraceId([trace; 16]), span, Arc::new(ScopeContext::default()))
+        SpanRecord::new(
+            TraceId([trace; 16]),
+            span,
+            Arc::new(ScopeContext::default()),
+        )
     }
 
     #[test]
     fn append_tracks_stats_and_accounting() {
         let mut b = TraceBuffer::new(limits());
         assert!(b.is_empty());
-        assert_eq!(b.append(rec(1, 5_000_000, 9_000_000, false), 0), Append::Stored);
-        assert_eq!(b.append(rec(1, 1_000_000, 4_000_000, true), 10), Append::Stored);
+        assert_eq!(
+            b.append(rec(1, 5_000_000, 9_000_000, false), 0),
+            Append::Stored
+        );
+        assert_eq!(
+            b.append(rec(1, 1_000_000, 4_000_000, true), 10),
+            Append::Stored
+        );
         assert_eq!(b.append(rec(1, 0, 1, false), 10), Append::TraceFull);
         let e = b.get(&TraceId([1; 16])).unwrap();
         assert_eq!(e.stats.duration_ms(), 8);

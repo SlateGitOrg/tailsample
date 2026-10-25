@@ -107,7 +107,11 @@ impl Exporter for Alternate {
     }
 }
 
-async fn http_call(method: &str, url: &str, body: Option<(&str, String)>) -> anyhow::Result<(u16, String)> {
+async fn http_call(
+    method: &str,
+    url: &str,
+    body: Option<(&str, String)>,
+) -> anyhow::Result<(u16, String)> {
     let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
     let mut b = Request::builder().method(method).uri(url);
     let payload = match body {
@@ -133,11 +137,20 @@ pub async fn run(opts: &DemoOptions) -> anyhow::Result<DemoReport> {
     cfg.exporter.kind = ExporterKind::OtlpGrpc;
     cfg.exporter.endpoint = sink.endpoint();
     let server = Server::start(&cfg).await?;
-    let grpc = server.grpc_addr().ok_or_else(|| anyhow::anyhow!("no gRPC receiver"))?;
-    let http = server.http_addr().ok_or_else(|| anyhow::anyhow!("no HTTP receiver"))?;
+    let grpc = server
+        .grpc_addr()
+        .ok_or_else(|| anyhow::anyhow!("no gRPC receiver"))?;
+    let http = server
+        .http_addr()
+        .ok_or_else(|| anyhow::anyhow!("no HTTP receiver"))?;
     let traces_url = format!("http://{http}/v1/traces");
 
-    let (status, _) = http_call("POST", &traces_url, Some(("application/json", FIXTURE_JSON.to_string()))).await?;
+    let (status, _) = http_call(
+        "POST",
+        &traces_url,
+        Some(("application/json", FIXTURE_JSON.to_string())),
+    )
+    .await?;
     anyhow::ensure!(status == 200, "fixture POST returned {status}");
 
     let gen = GenConfig {
@@ -146,7 +159,8 @@ pub async fn run(opts: &DemoOptions) -> anyhow::Result<DemoReport> {
         late_delay_ms: (3_500, 4_500),
         ..GenConfig::default()
     };
-    let mut schedule = Schedule::new(gen, opts.traces, opts.rate, true).with_max_spans_per_request(256);
+    let mut schedule =
+        Schedule::new(gen, opts.traces, opts.rate, true).with_max_spans_per_request(256);
     let target = Arc::new(Alternate {
         grpc: GrpcExporter::new(&format!("http://{grpc}"))?,
         http: HttpExporter::new(&traces_url)?,
@@ -154,7 +168,12 @@ pub async fn run(opts: &DemoOptions) -> anyhow::Result<DemoReport> {
         grpc_sent: AtomicU64::new(0),
         http_sent: AtomicU64::new(0),
     });
-    let load = run_live(&mut schedule, Arc::clone(&target) as Arc<dyn Exporter>, &LiveOptions::default()).await;
+    let load = run_live(
+        &mut schedule,
+        Arc::clone(&target) as Arc<dyn Exporter>,
+        &LiveOptions::default(),
+    )
+    .await;
 
     // Give the last traces their full decision wait before shutting down.
     tokio::time::sleep(Duration::from_millis(cfg.buffer.decision_wait_ms + 300)).await;
@@ -174,12 +193,16 @@ pub async fn run(opts: &DemoOptions) -> anyhow::Result<DemoReport> {
         ),
         metrics_excerpt: metrics
             .lines()
-            .filter(|l| l.starts_with("tailsample_traces_total") || l.starts_with("tailsample_sampled_traces_by_policy_total{"))
+            .filter(|l| {
+                l.starts_with("tailsample_traces_total")
+                    || l.starts_with("tailsample_sampled_traces_by_policy_total{")
+            })
             .map(str::to_string)
             .collect(),
         ..DemoReport::default()
     };
-    let fixture_id = TraceId::from_slice(&hex(FIXTURE_TRACE_ID)).ok_or_else(|| anyhow::anyhow!("bad fixture id"))?;
+    let fixture_id = TraceId::from_slice(&hex(FIXTURE_TRACE_ID))
+        .ok_or_else(|| anyhow::anyhow!("bad fixture id"))?;
     report.fixture_kept = seen.spans_by_trace.get(&fixture_id) == Some(&2);
     if let Some(truth) = schedule.truth() {
         for (id, t) in truth {
@@ -218,15 +241,29 @@ impl fmt::Display for DemoReport {
             "{:<8} {:>8} {:>8} {:>8} {:>9} {:>10} {:>10}",
             "class", "traces", "kept", "kept%", "complete", "spans_in", "spans_out"
         )?;
-        for (name, c) in [("error", &self.errors), ("slow", &self.slow), ("normal", &self.normal)] {
+        for (name, c) in [
+            ("error", &self.errors),
+            ("slow", &self.slow),
+            ("normal", &self.normal),
+        ] {
             writeln!(
                 f,
                 "{:<8} {:>8} {:>8} {:>7.2}% {:>9} {:>10} {:>10}",
-                name, c.generated, c.kept, c.kept_pct(), c.complete, c.spans_generated, c.spans_kept
+                name,
+                c.generated,
+                c.kept,
+                c.kept_pct(),
+                c.complete,
+                c.spans_generated,
+                c.spans_kept
             )?;
         }
         writeln!(f)?;
-        writeln!(f, "fixture trace {FIXTURE_TRACE_ID} (OTLP/JSON, status ERROR) kept: {}", self.fixture_kept)?;
+        writeln!(
+            f,
+            "fixture trace {FIXTURE_TRACE_ID} (OTLP/JSON, status ERROR) kept: {}",
+            self.fixture_kept
+        )?;
         let s = &self.core.stats;
         writeln!(
             f,

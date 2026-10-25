@@ -17,7 +17,11 @@ use tailsample::sink::Sink;
 use tailsample::{demo, policy};
 
 #[derive(Parser)]
-#[command(name = "tailsample", version, about = "Tail-based trace sampler for OTLP")]
+#[command(
+    name = "tailsample",
+    version,
+    about = "Tail-based trace sampler for OTLP"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -112,7 +116,10 @@ impl Workload {
 
 fn init_logging(default: &str) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(false).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .try_init();
 }
 
 #[tokio::main]
@@ -143,10 +150,16 @@ async fn run(cmd: Cmd) -> anyhow::Result<()> {
             let cfg = Config::load(&config)?;
             let engine = policy::PolicyEngine::from_config(&cfg.effective_policies())?;
             println!("config OK: {}", config.display());
-            println!("policies (evaluated in order): {}", engine.names().join(", "));
+            println!(
+                "policies (evaluated in order): {}",
+                engine.names().join(", ")
+            );
             println!(
                 "buffer: wait {} ms, {} traces / {} bytes max, eviction {:?}",
-                cfg.buffer.decision_wait_ms, cfg.buffer.max_traces, cfg.buffer.max_bytes, cfg.buffer.eviction
+                cfg.buffer.decision_wait_ms,
+                cfg.buffer.max_traces,
+                cfg.buffer.max_bytes,
+                cfg.buffer.eviction
             );
             Ok(())
         }
@@ -161,7 +174,10 @@ async fn run(cmd: Cmd) -> anyhow::Result<()> {
             let started = std::time::Instant::now();
             let report = simulate(&cfg, &opts)?;
             println!("{report}");
-            println!("(computed in {:.2}s wall time)", started.elapsed().as_secs_f64());
+            println!(
+                "(computed in {:.2}s wall time)",
+                started.elapsed().as_secs_f64()
+            );
             Ok(())
         }
         Cmd::Loadgen {

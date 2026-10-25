@@ -148,7 +148,9 @@ impl Generator {
     pub fn trace(&mut self, start_ms: u64) -> GenTrace {
         let id = loop {
             let hi = u128::from(self.rng.next_u64()) << 64;
-            if let Some(id) = TraceId::from_slice(&(hi | u128::from(self.rng.next_u64())).to_be_bytes()) {
+            if let Some(id) =
+                TraceId::from_slice(&(hi | u128::from(self.rng.next_u64())).to_be_bytes())
+            {
                 break id;
             }
         };
@@ -208,7 +210,14 @@ impl Generator {
                 let (lo, hi) = self.cfg.late_delay_ms;
                 arrival = start_ms + root_end as u64 + self.rng.range(lo, hi);
             }
-            let span = self.to_span(id, n, span_ids[i], n.parent.map(|p| span_ids[p]), start_ms, i == 0);
+            let span = self.to_span(
+                id,
+                n,
+                span_ids[i],
+                n.parent.map(|p| span_ids[p]),
+                start_ms,
+                i == 0,
+            );
             spans.push(GenSpan {
                 service: n.service,
                 span,
@@ -288,7 +297,10 @@ impl Generator {
             Protocol::Http { method, route } => {
                 attrs.push(kv_str("http.request.method", method));
                 attrs.push(kv_str("http.route", route));
-                attrs.push(kv_int("http.response.status_code", if n.error { 500 } else { 200 }));
+                attrs.push(kv_int(
+                    "http.response.status_code",
+                    if n.error { 500 } else { 200 },
+                ));
             }
             Protocol::Rpc { service, method } => {
                 attrs.push(kv_str("rpc.system", "grpc"));
@@ -334,7 +346,11 @@ impl Generator {
             events,
             status: Some(Status {
                 code: if n.error { 2 } else { 0 },
-                message: if n.error { "upstream failure".into() } else { String::new() },
+                message: if n.error {
+                    "upstream failure".into()
+                } else {
+                    String::new()
+                },
             }),
             ..Default::default()
         }
@@ -368,7 +384,11 @@ mod tests {
     fn traces_are_well_formed_trees() {
         for t in gen(GenConfig::default(), 300) {
             let ids: Vec<&Vec<u8>> = t.spans.iter().map(|s| &s.span.span_id).collect();
-            let roots = t.spans.iter().filter(|s| s.span.parent_span_id.is_empty()).count();
+            let roots = t
+                .spans
+                .iter()
+                .filter(|s| s.span.parent_span_id.is_empty())
+                .count();
             assert_eq!(roots, 1);
             for s in &t.spans {
                 assert_eq!(s.span.trace_id, t.id.0.to_vec());
@@ -428,7 +448,10 @@ mod tests {
             .map(|t| t.truth.duration_ms)
             .max()
             .unwrap();
-        assert!(normal_max < 1_000, "normal traces stay under 1s: {normal_max}");
+        assert!(
+            normal_max < 1_000,
+            "normal traces stay under 1s: {normal_max}"
+        );
     }
 
     #[test]

@@ -71,22 +71,42 @@ fn config(extra: &str) -> Config {
     cfg
 }
 
-async fn post(url: &str, ctype: &str, encoding: Option<&str>, body: Vec<u8>) -> (u16, hyper::HeaderMap, Vec<u8>) {
+async fn post(
+    url: &str,
+    ctype: &str,
+    encoding: Option<&str>,
+    body: Vec<u8>,
+) -> (u16, hyper::HeaderMap, Vec<u8>) {
     let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
-    let mut b = Request::builder().method("POST").uri(url).header("content-type", ctype);
+    let mut b = Request::builder()
+        .method("POST")
+        .uri(url)
+        .header("content-type", ctype);
     if let Some(e) = encoding {
         b = b.header("content-encoding", e);
     }
-    let resp = client.request(b.body(Full::new(Bytes::from(body))).unwrap()).await.unwrap();
+    let resp = client
+        .request(b.body(Full::new(Bytes::from(body))).unwrap())
+        .await
+        .unwrap();
     let status = resp.status().as_u16();
     let headers = resp.headers().clone();
-    let body = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
     (status, headers, body)
 }
 
 async fn get(url: &str) -> (u16, String) {
     let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
-    let resp = client.request(Request::get(url).body(Full::new(Bytes::new())).unwrap()).await.unwrap();
+    let resp = client
+        .request(Request::get(url).body(Full::new(Bytes::new())).unwrap())
+        .await
+        .unwrap();
     let status = resp.status().as_u16();
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     (status, String::from_utf8_lossy(&body).into_owned())
@@ -109,11 +129,23 @@ async fn grpc_and_http_ingest_reach_the_sink() {
     // HTTP protobuf, gzip-compressed.
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     gz.write_all(&request(3, 2, true).encode_to_vec()).unwrap();
-    let (status, headers, _) = post(&http, "application/x-protobuf", Some("gzip"), gz.finish().unwrap()).await;
+    let (status, headers, _) = post(
+        &http,
+        "application/x-protobuf",
+        Some("gzip"),
+        gz.finish().unwrap(),
+    )
+    .await;
     assert_eq!(status, 200);
     assert_eq!(headers["content-type"], "application/x-protobuf");
     // HTTP JSON fixture.
-    let (status, headers, body) = post(&http, "application/json", None, tailsample::demo::FIXTURE_JSON.as_bytes().to_vec()).await;
+    let (status, headers, body) = post(
+        &http,
+        "application/json",
+        None,
+        tailsample::demo::FIXTURE_JSON.as_bytes().to_vec(),
+    )
+    .await;
     assert_eq!(status, 200);
     assert_eq!(headers["content-type"], "application/json");
     assert!(body.starts_with(b"{"));
@@ -135,35 +167,61 @@ async fn grpc_and_http_ingest_reach_the_sink() {
 
 #[tokio::test]
 async fn malformed_requests_metrics_and_health() {
-    let server = Server::start_with_exporter(&config(""), Box::new(tailsample::exporter::NullExporter))
-        .await
-        .unwrap();
+    let server =
+        Server::start_with_exporter(&config(""), Box::new(tailsample::exporter::NullExporter))
+            .await
+            .unwrap();
     let base = format!("http://{}", server.http_addr().unwrap());
     let url = format!("{base}/v1/traces");
-    assert_eq!(post(&url, "application/json", None, b"{nope".to_vec()).await.0, 400);
+    assert_eq!(
+        post(&url, "application/json", None, b"{nope".to_vec())
+            .await
+            .0,
+        400
+    );
     assert_eq!(post(&url, "text/plain", None, b"x".to_vec()).await.0, 415);
-    assert_eq!(post(&url, "application/x-protobuf", Some("br"), vec![]).await.0, 415);
+    assert_eq!(
+        post(&url, "application/x-protobuf", Some("br"), vec![])
+            .await
+            .0,
+        415
+    );
     // A small gzip body that inflates past max_request_bytes (8 MiB).
     let mut bomb = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
     bomb.write_all(&vec![0u8; 9 * 1024 * 1024]).unwrap();
     let bomb = bomb.finish().unwrap();
     assert!(bomb.len() < 64 * 1024);
-    assert_eq!(post(&url, "application/x-protobuf", Some("gzip"), bomb).await.0, 413);
+    assert_eq!(
+        post(&url, "application/x-protobuf", Some("gzip"), bomb)
+            .await
+            .0,
+        413
+    );
 
     // Invalid trace ids are reported as partial success.
     let mut bad = request(0, 2, false);
     bad.resource_spans[0].scope_spans[0].spans[1].trace_id = vec![5; 16];
     let (status, _, body) = post(&url, "application/x-protobuf", None, bad.encode_to_vec()).await;
     assert_eq!(status, 200);
-    let resp = opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceResponse::decode(&body[..]).unwrap();
+    let resp =
+        opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceResponse::decode(
+            &body[..],
+        )
+        .unwrap();
     assert_eq!(resp.partial_success.unwrap().rejected_spans, 1);
 
     assert_eq!(get(&format!("{base}/healthz")).await, (200, "ok".into()));
     tokio::time::sleep(Duration::from_millis(100)).await;
     let (status, text) = get(&format!("{base}/metrics")).await;
     assert_eq!(status, 200);
-    assert!(text.contains("tailsample_receiver_rejected_malformed_total 4"), "{text}");
-    assert!(text.contains("tailsample_spans_total{outcome=\"invalid\"} 1"), "{text}");
+    assert!(
+        text.contains("tailsample_receiver_rejected_malformed_total 4"),
+        "{text}"
+    );
+    assert!(
+        text.contains("tailsample_spans_total{outcome=\"invalid\"} 1"),
+        "{text}"
+    );
     server.shutdown().await;
 }
 
@@ -184,7 +242,9 @@ async fn slow_downstream_turns_into_retryable_refusals() {
     cfg.exporter.queue_capacity = 1;
     cfg.exporter.max_batch_spans = 1;
     cfg.policies.clear(); // always sample: every span heads for the stuck exporter
-    let server = Server::start_with_exporter(&cfg, Box::new(Stuck)).await.unwrap();
+    let server = Server::start_with_exporter(&cfg, Box::new(Stuck))
+        .await
+        .unwrap();
     let url = format!("http://{}/v1/traces", server.http_addr().unwrap());
     let mut grpc = TraceServiceClient::connect(format!("http://{}", server.grpc_addr().unwrap()))
         .await
@@ -193,7 +253,13 @@ async fn slow_downstream_turns_into_retryable_refusals() {
     let mut http_429 = None;
     let mut grpc_unavailable = None;
     for i in 1..=250u8 {
-        let (status, headers, _) = post(&url, "application/x-protobuf", None, request(i, 1, false).encode_to_vec()).await;
+        let (status, headers, _) = post(
+            &url,
+            "application/x-protobuf",
+            None,
+            request(i, 1, false).encode_to_vec(),
+        )
+        .await;
         if status == 429 && http_429.is_none() {
             http_429 = Some(headers["retry-after"].to_str().unwrap().to_string());
         }
@@ -222,7 +288,13 @@ async fn reject_new_answers_503_when_buffer_full() {
     let url = format!("http://{}/v1/traces", server.http_addr().unwrap());
     let mut got_503 = false;
     for i in 1..=50u8 {
-        let (status, headers, _) = post(&url, "application/x-protobuf", None, request(i, 1, false).encode_to_vec()).await;
+        let (status, headers, _) = post(
+            &url,
+            "application/x-protobuf",
+            None,
+            request(i, 1, false).encode_to_vec(),
+        )
+        .await;
         if status == 503 {
             assert!(headers.contains_key("retry-after"));
             got_503 = true;
@@ -246,7 +318,13 @@ async fn shutdown_flushes_buffered_traces() {
     assert!(server.grpc_addr().is_none());
     let url = format!("http://{}/v1/traces", server.http_addr().unwrap());
     for i in 1..=20u8 {
-        let (status, _, _) = post(&url, "application/x-protobuf", None, request(i, 2, i % 2 == 0).encode_to_vec()).await;
+        let (status, _, _) = post(
+            &url,
+            "application/x-protobuf",
+            None,
+            request(i, 2, i % 2 == 0).encode_to_vec(),
+        )
+        .await;
         assert_eq!(status, 200);
     }
     server.shutdown().await;

@@ -135,7 +135,10 @@ pub fn simulate(cfg: &Config, opts: &SimOptions) -> Result<SimReport, ConfigErro
                 let key = (r.policy.to_string(), now / 1_000);
                 let v = window_spans.entry(key).or_default();
                 *v += r.spans.len() as u64;
-                let m = report.max_window_spans.entry(r.policy.to_string()).or_default();
+                let m = report
+                    .max_window_spans
+                    .entry(r.policy.to_string())
+                    .or_default();
                 *m = (*m).max(*v);
             }
         }
@@ -198,11 +201,20 @@ impl fmt::Display for SimReport {
             writeln!(
                 f,
                 "{:<8} {:>9} {:>9} {:>7.2}% {:>9} {:>11} {:>11}",
-                name, c.generated, c.kept, c.kept_pct(), c.complete, c.spans_generated, c.spans_kept
+                name,
+                c.generated,
+                c.kept,
+                c.kept_pct(),
+                c.complete,
+                c.spans_generated,
+                c.spans_kept
             )?;
         }
         writeln!(f)?;
-        writeln!(f, "sampled traces by policy (max spans released in any 1s window):")?;
+        writeln!(
+            f,
+            "sampled traces by policy (max spans released in any 1s window):"
+        )?;
         for (k, v) in &self.stats.sampled_by_policy {
             let w = self.max_window_spans.get(k).copied().unwrap_or(0);
             writeln!(f, "  {k:<28} {v:>8} traces   max {w:>6} spans/s")?;
@@ -251,8 +263,14 @@ mod tests {
         let t = r.total();
         assert_eq!(t.generated, 500);
         assert_eq!(t.kept, 500);
-        assert_eq!(t.complete, 500, "late spans must be forwarded via the cache");
-        assert_eq!(r.stats.spans_received, r.stats.spans_sampled + r.stats.spans_late_sampled);
+        assert_eq!(
+            t.complete, 500,
+            "late spans must be forwarded via the cache"
+        );
+        assert_eq!(
+            r.stats.spans_received,
+            r.stats.spans_sampled + r.stats.spans_late_sampled
+        );
         let text = r.to_string();
         assert!(text.contains("total"));
         assert!(text.contains("always"));

@@ -18,7 +18,9 @@ use std::sync::Arc;
 
 pub use attribute::AttributePolicy;
 pub use composite::{AndPolicy, CompositePolicy};
-pub use leaf::{AlwaysSample, LatencyPolicy, ProbabilisticPolicy, SpanCountPolicy, StatusCodePolicy};
+pub use leaf::{
+    AlwaysSample, LatencyPolicy, ProbabilisticPolicy, SpanCountPolicy, StatusCodePolicy,
+};
 pub use rate::RateLimitingPolicy;
 
 use crate::buffer::TraceStats;
@@ -60,7 +62,11 @@ pub fn build(cfg: &PolicyConfig, prefix: &str) -> Result<Box<dyn Policy>, Config
         PolicyKind::Latency {
             threshold_ms,
             upper_threshold_ms,
-        } => Box::new(LatencyPolicy::new(label, *threshold_ms, *upper_threshold_ms)),
+        } => Box::new(LatencyPolicy::new(
+            label,
+            *threshold_ms,
+            *upper_threshold_ms,
+        )),
         PolicyKind::StatusCode { codes } => Box::new(StatusCodePolicy::new(label, codes)),
         PolicyKind::Attribute {
             key,
@@ -112,8 +118,7 @@ pub fn build(cfg: &PolicyConfig, prefix: &str) -> Result<Box<dyn Policy>, Config
                 .map(|s| build(s, &cfg.name))
                 .collect::<Result<Vec<_>, _>>()?;
             let names: Vec<&str> = sub_policies.iter().map(|s| s.name.as_str()).collect();
-            let budgets =
-                composite::allocate(*max_total_spans_per_second, &names, rate_allocation);
+            let budgets = composite::allocate(*max_total_spans_per_second, &names, rate_allocation);
             Box::new(CompositePolicy::new(label, subs, budgets))
         }
     };

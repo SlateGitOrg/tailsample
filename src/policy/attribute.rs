@@ -84,7 +84,10 @@ impl AttributePolicy {
     }
 
     fn span_matches(&self, r: &SpanRecord) -> bool {
-        let span_hit = || r.span_attr(&self.key).is_some_and(|v| self.value_matches(v));
+        let span_hit = || {
+            r.span_attr(&self.key)
+                .is_some_and(|v| self.value_matches(v))
+        };
         let res_hit = || {
             r.resource_attr(&self.key)
                 .is_some_and(|v| self.value_matches(v))
@@ -142,7 +145,14 @@ mod tests {
 
     #[test]
     fn exact_values_and_types() {
-        let mut p = pol(&["premium", "true", "7"], None, (None, None), AttributeScope::Span, false, "tier");
+        let mut p = pol(
+            &["premium", "true", "7"],
+            None,
+            (None, None),
+            AttributeScope::Span,
+            false,
+            "tier",
+        );
         assert_eq!(p.name(), "attr");
         assert!(eval(&mut p, vec![kv_str("tier", "premium")], "s"));
         assert!(!eval(&mut p, vec![kv_str("tier", "free")], "s"));
@@ -173,12 +183,34 @@ mod tests {
 
     #[test]
     fn regex_and_numeric_range() {
-        let mut re = pol(&[], Some("^/api/v[0-9]+/pay"), (None, None), AttributeScope::Span, false, "http.route");
-        assert!(eval(&mut re, vec![kv_str("http.route", "/api/v2/pay")], "s"));
+        let mut re = pol(
+            &[],
+            Some("^/api/v[0-9]+/pay"),
+            (None, None),
+            AttributeScope::Span,
+            false,
+            "http.route",
+        );
+        assert!(eval(
+            &mut re,
+            vec![kv_str("http.route", "/api/v2/pay")],
+            "s"
+        ));
         assert!(!eval(&mut re, vec![kv_str("http.route", "/health")], "s"));
-        let mut range = pol(&[], None, (Some(500.0), Some(599.0)), AttributeScope::Span, false, "http.status_code");
+        let mut range = pol(
+            &[],
+            None,
+            (Some(500.0), Some(599.0)),
+            AttributeScope::Span,
+            false,
+            "http.status_code",
+        );
         assert!(eval(&mut range, vec![kv_int("http.status_code", 503)], "s"));
-        assert!(!eval(&mut range, vec![kv_int("http.status_code", 404)], "s"));
+        assert!(!eval(
+            &mut range,
+            vec![kv_int("http.status_code", 404)],
+            "s"
+        ));
         let d = KeyValue {
             key: "http.status_code".into(),
             value: Some(AnyValue {
@@ -187,18 +219,51 @@ mod tests {
             ..Default::default()
         };
         assert!(eval(&mut range, vec![d], "s"));
-        assert!(!eval(&mut range, vec![kv_str("http.status_code", "503")], "s"));
+        assert!(!eval(
+            &mut range,
+            vec![kv_str("http.status_code", "503")],
+            "s"
+        ));
     }
 
     #[test]
     fn scope_and_invert() {
-        let mut res = pol(&["checkout"], None, (None, None), AttributeScope::Resource, false, "service.name");
+        let mut res = pol(
+            &["checkout"],
+            None,
+            (None, None),
+            AttributeScope::Resource,
+            false,
+            "service.name",
+        );
         assert!(eval(&mut res, vec![], "checkout"));
-        assert!(!eval(&mut res, vec![kv_str("service.name", "checkout")], "other"));
-        let mut any = pol(&["checkout"], None, (None, None), AttributeScope::Any, false, "service.name");
-        assert!(eval(&mut any, vec![kv_str("service.name", "checkout")], "other"));
+        assert!(!eval(
+            &mut res,
+            vec![kv_str("service.name", "checkout")],
+            "other"
+        ));
+        let mut any = pol(
+            &["checkout"],
+            None,
+            (None, None),
+            AttributeScope::Any,
+            false,
+            "service.name",
+        );
+        assert!(eval(
+            &mut any,
+            vec![kv_str("service.name", "checkout")],
+            "other"
+        ));
         assert!(eval(&mut any, vec![], "checkout"));
-        let mut inv = pol(&["health"], None, (None, None), AttributeScope::Span, true, "kind");
+        let mut inv = pol(
+            &["health"],
+            None,
+            (None, None),
+            AttributeScope::Span,
+            true,
+            "kind",
+        );
         assert!(!eval(&mut inv, vec![kv_str("kind", "health")], "s"));
         assert!(eval(&mut inv, vec![kv_str("kind", "user")], "s"));
     }

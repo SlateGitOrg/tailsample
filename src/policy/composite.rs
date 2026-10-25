@@ -132,7 +132,10 @@ mod tests {
 
     #[test]
     fn allocation_splits_remainder() {
-        assert_eq!(allocate(1000, &["a", "b", "c"], &[alloc("a", 50.0)]), vec![500, 250, 250]);
+        assert_eq!(
+            allocate(1000, &["a", "b", "c"], &[alloc("a", 50.0)]),
+            vec![500, 250, 250]
+        );
         assert_eq!(allocate(1000, &["a", "b"], &[]), vec![500, 500]);
         assert_eq!(allocate(10, &["a"], &[alloc("a", 33.0)]), vec![3]);
         assert_eq!(
@@ -143,7 +146,10 @@ mod tests {
 
     fn comp() -> CompositePolicy {
         let subs: Vec<Box<dyn Policy>> = vec![
-            Box::new(StatusCodePolicy::new(Arc::from("c/err"), &[StatusCodeName::Error])),
+            Box::new(StatusCodePolicy::new(
+                Arc::from("c/err"),
+                &[StatusCodeName::Error],
+            )),
             Box::new(AlwaysSample::new(Arc::from("c/rest"))),
         ];
         CompositePolicy::new(Arc::from("c"), subs, vec![6, 4])
@@ -161,7 +167,7 @@ mod tests {
         // err budget exhausted (6/6): error trace falls through to "rest".
         assert_eq!(c.evaluate(&err.view(), 20).as_deref(), Some("c/rest"));
         assert_eq!(c.evaluate(&ok.view(), 30), None); // rest: 3 + 2 > 4
-        // New window resets budgets.
+                                                      // New window resets budgets.
         assert_eq!(c.evaluate(&ok.view(), 1_000).as_deref(), Some("c/rest"));
         assert_eq!(c.evaluate(&err.view(), 1_001).as_deref(), Some("c/err"));
     }
@@ -169,13 +175,22 @@ mod tests {
     #[test]
     fn and_requires_all() {
         let subs: Vec<Box<dyn Policy>> = vec![
-            Box::new(StatusCodePolicy::new(Arc::from("a/err"), &[StatusCodeName::Error])),
+            Box::new(StatusCodePolicy::new(
+                Arc::from("a/err"),
+                &[StatusCodeName::Error],
+            )),
             Box::new(LatencyPolicy::new(Arc::from("a/slow"), 100, None)),
         ];
         let mut a = AndPolicy::new(Arc::from("a"), subs);
         assert_eq!(a.name(), "a");
-        assert!(a.evaluate(&trace(1, "s", &[(200, 2, vec![])]).view(), 0).is_some());
-        assert!(a.evaluate(&trace(1, "s", &[(20, 2, vec![])]).view(), 0).is_none());
-        assert!(a.evaluate(&trace(1, "s", &[(200, 0, vec![])]).view(), 0).is_none());
+        assert!(a
+            .evaluate(&trace(1, "s", &[(200, 2, vec![])]).view(), 0)
+            .is_some());
+        assert!(a
+            .evaluate(&trace(1, "s", &[(20, 2, vec![])]).view(), 0)
+            .is_none());
+        assert!(a
+            .evaluate(&trace(1, "s", &[(200, 0, vec![])]).view(), 0)
+            .is_none());
     }
 }
