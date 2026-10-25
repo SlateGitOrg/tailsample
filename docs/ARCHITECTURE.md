@@ -40,7 +40,7 @@ flowchart LR
 | `ids`, `model` | `TraceId`; flattening OTLP requests into `SpanRecord`s that share resource/scope context via `Arc`; regrouping for export; per-span byte estimate |
 | `buffer` | `TraceBuffer`: traces keyed by id, FIFO of deadlines, byte/trace accounting |
 | `cache` | `DecisionCache`: bounded memory of recent decisions for late spans |
-| `policy` | `Policy` trait and the eight policy kinds; `PolicyEngine` (ordered, first match wins) |
+| `policy` | `Policy` trait and the nine policy kinds; `PolicyEngine` (ordered, first match wins) |
 | `sampler` | `Sampler`: the deterministic core — admission, eviction, decisions, counters |
 | `runtime` | `Pipeline`: sampler task, bounded queues, `IngestHandle` used by receivers |
 | `receiver::{grpc,http}` | OTLP receivers, error mapping, `/metrics`, `/healthz` |
@@ -184,10 +184,14 @@ sequenceDiagram
 The chain is deliberate: nothing in the middle drops data because a later
 stage is slow. Each stage has a bounded queue, the sampler *awaits* export
 capacity, and the refusal surfaces at the receiver as a retryable OTLP
-error. The benchmark's capped-exporter scenario shows the effect: with an
-exporter that can move about 51k spans/s, accepted throughput settles near
-that rate and the excess is refused, with heap bounded by the configured
-limits instead of growing.
+error. The benchmark's capped-exporter scenario shows the effect
+(`make bench`, `bench/bench-results.md`): with every trace sampled and an
+exporter that sleeps 20 ms per request of at most 1,024 spans (a ceiling of
+about 51k spans/s), accepted throughput drops from about 322k spans/s (null
+exporter) to about 42k spans/s, roughly 6.9k requests are refused and
+retried by the clients, and peak heap stays at 138 MiB instead of growing.
+Exported spans/s over the 10 s window (33k) is below the accepted rate
+because the first second is spent filling the decision wait.
 
 | Condition | gRPC | HTTP | Counter |
 |---|---|---|---|
