@@ -18,6 +18,7 @@ pub mod cache;
 pub mod config;
 pub mod ids;
 pub mod model;
+pub mod policy;
 
 pub use config::Config;
 pub use ids::TraceId;
